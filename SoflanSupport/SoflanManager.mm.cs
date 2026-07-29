@@ -200,27 +200,30 @@ namespace SoflanSupport
         public void loadComposition(MA2RecordList records, NotesReader sr)
         {
             var filePath = sr.GetHeader()._notesName;
-            if (!File.Exists(filePath))
+            if (!LCPackage.Manager.FileExist(filePath, SearchOption.TopDirectoryOnly))
             {
                 //log error
                 return;
             }
 
-            foreach (var line in File.ReadLines(filePath))
+            using (var reader = LCPackage.Manager.OpenText(filePath))
             {
-                if (line.StartsWith("SFL", StringComparison.InvariantCultureIgnoreCase))
+                string line;
+                while ((line = reader.ReadLine()) != null)
                 {
-                    if (!tryParseSoflan(line, out var soflan))
+                    if (line.StartsWith("SFL", StringComparison.InvariantCultureIgnoreCase))
                     {
-                        PatchLog.WriteLine($"parse soflan failed, line content:{line}");
-                        break;
+                        if (!tryParseSoflan(line, out var soflan))
+                        {
+                            PatchLog.WriteLine($"parse soflan failed, line content:{line}");
+                            break;
+                        }
+                        soflanListMap.Add(soflan);
+                        containSoflans = true;
+                        PatchLog.WriteLine($"parse soflan: {soflan}");
                     }
-                    soflanListMap.Add(soflan);
-                    containSoflans = true;
-                    PatchLog.WriteLine($"parse soflan: {soflan}");
                 }
             }
-
 
             foreach (var item in sr.GetCompositioin()._bpmList)
             {

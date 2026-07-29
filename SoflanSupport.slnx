@@ -1,4 +1,3 @@
 <Solution>
   <Project Path="Assembly-CSharp.SoflanSupport.mm.csproj" />
-  <Project Path="SoflanSimulator/SoflanSimulator.csproj" />
 </Solution>

@@ -146,7 +146,7 @@ namespace SoflanCalculator
                 {
                     // 可能路径含空格但用户未加引号; 尝试把 ma2= 之后的所有内容当路径
                     // (如果 ma2= 是最后一个 token, 上面已正确; 否则需要从原始 input 提取)
-                    if (newMa2.Length == 0 || !File.Exists(newMa2))
+                    if (newMa2.Length == 0 || !LCPackage.Manager.FileExist(newMa2, SearchOption.TopDirectoryOnly))
                     {
                         // 尝试从原始输入中提取 ma2= 之后的完整路径
                         int ma2Idx = input.IndexOf("ma2=", StringComparison.OrdinalIgnoreCase);
@@ -157,7 +157,7 @@ namespace SoflanCalculator
                             int nextCmd = FindNextCommand(afterMa2);
                             if (nextCmd >= 0)
                                 afterMa2 = afterMa2.Substring(0, nextCmd).Trim();
-                            if (File.Exists(afterMa2))
+                            if (LCPackage.Manager.FileExist(afterMa2, SearchOption.TopDirectoryOnly))
                                 newMa2 = afterMa2;
                         }
                     }
@@ -202,7 +202,7 @@ namespace SoflanCalculator
 
         private static Ma2Data LoadMa2(string filePath)
         {
-            if (!File.Exists(filePath))
+            if (!LCPackage.Manager.FileExist(filePath, SearchOption.TopDirectoryOnly))
             {
                 Console.Error.WriteLine($"错误: 文件不存在 -> {filePath}");
                 return null;

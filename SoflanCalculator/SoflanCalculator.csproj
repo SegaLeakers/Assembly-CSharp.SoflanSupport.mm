@@ -13,6 +13,11 @@
     <ProjectReference Include="..\Dependencies\SimpleSoflanFramework\SimpleSoflanFramework.Core.NetFx472\SimpleSoflanFramework.Core.NetFx472.csproj">
       <Private>true</Private>
     </ProjectReference>
+    <Reference Include="LCPackage">
+      <HintPath>..\Dependencies\LCPackage.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <None Include="..\Dependencies\LCPackage_NT.dll" CopyToOutputDirectory="PreserveNewest" TargetPath="LCPackage_NT.dll" />
   </ItemGroup>
 
 </Project>

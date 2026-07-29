@@ -102,9 +102,9 @@ namespace SoflanCalculator
         public static Ma2Data Parse(string filePath)
         {
             var data = new Ma2Data();
-            var lines = File.ReadAllLines(filePath);
+            var lines = ReadAllLines(filePath);
 
-            for (int i = 0; i < lines.Length; i++)
+            for (int i = 0; i < lines.Count; i++)
             {
                 string line = lines[i];
                 if (string.IsNullOrWhiteSpace(line))
@@ -171,6 +171,21 @@ namespace SoflanCalculator
             }
 
             return data;
+        }
+
+        private static List<string> ReadAllLines(string filePath)
+        {
+            var lines = new List<string>();
+            using (var reader = LCPackage.Manager.OpenText(filePath))
+            {
+                string line;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    lines.Add(line);
+                }
+            }
+
+            return lines;
         }
 
         /// <summary>
