@@ -16,6 +16,8 @@ namespace Monitor
         private float breakNoteSoflanTime;
         private bool breakIsFixedSoflanToUnifiedSpeed;
         private float breakFixedSoflanUnifiedSpeed;
+        private float breakVisualDefaultMsec;
+        private float breakMaiBugAdjustMsec;
 
         public extern void orig_Initialize(NoteData note);
 
@@ -24,12 +26,18 @@ namespace Monitor
             orig_Initialize(note);
 
             breakSoflanManager = Singleton<SoflanManager>.Instance;
-            breakIsInSoflan = breakSoflanManager.containsSoflans();
+            breakIsInSoflan = breakSoflanManager.containsSoflans(MonitorId);
             if (breakIsInSoflan)
             {
-                breakSoflanGroup = breakSoflanManager.getNoteSoflanGroup(NoteIndex);
-                var noteAudioMsec = breakSoflanManager.getNoteAudioMsecForSoflan(NoteIndex, AppearMsec);
-                breakNoteSoflanTime = breakSoflanManager.ConvertAudioTimeToY_PreviewMode(noteAudioMsec, breakSoflanGroup);
+                breakSoflanGroup = breakSoflanManager.getNoteSoflanGroup(MonitorId, NoteIndex);
+                var noteAudioMsec = breakSoflanManager.getNoteAudioMsecForSoflan(
+                    MonitorId,
+                    NoteIndex,
+                    AppearMsec);
+                breakNoteSoflanTime = breakSoflanManager.ConvertAudioTimeToY_PreviewMode(
+                    MonitorId,
+                    noteAudioMsec,
+                    breakSoflanGroup);
             }
             else
             {
@@ -43,6 +51,12 @@ namespace Monitor
             breakFixedSoflanUnifiedSpeed = fixedNote.fixedSoflanUnifiedSpeed > 0f
                 ? fixedNote.fixedSoflanUnifiedSpeed
                 : FixedSoflan.DefaultUnifiedSpeed;
+            breakVisualDefaultMsec = breakIsFixedSoflanToUnifiedSpeed
+                ? FixedSoflan.GetDefaultMsec(breakFixedSoflanUnifiedSpeed)
+                : DefaultMsec;
+            breakMaiBugAdjustMsec = SoflanVisualTiming.GetMaiBugAdjustMsec(
+                note.type.getEnum(),
+                2f * breakVisualDefaultMsec);
         }
 
         protected extern void orig_NoteCheck();
@@ -54,9 +68,8 @@ namespace Monitor
             if (breakIsInSoflan && CheckSupportSoflan() && !EndFlag)
             {
                 var absDiffTime = Math.Abs(GetBreakSoflanTimeDiff());
-                var scale = breakIsFixedSoflanToUnifiedSpeed
-                    ? FixedSoflan.GetScaleProgress(absDiffTime, breakFixedSoflanUnifiedSpeed)
-                    : Mathf.Clamp01((2f * DefaultMsec - GetMaiBugAdjustMSec() - absDiffTime) / DefaultMsec);
+                var scale = Mathf.Clamp01(
+                    (2f * breakVisualDefaultMsec - absDiffTime) / breakVisualDefaultMsec);
                 scale *= Singleton<GamePlayManager>.Instance.GetGameScore(MonitorId).UserOption.NoteSize.GetValue();
                 NoteObj.transform.localScale = new Vector3(scale, scale, 0f);
             }
@@ -64,8 +77,10 @@ namespace Monitor
 
         private float GetBreakSoflanTimeDiff()
         {
-            var currentSoflanTime = breakSoflanManager.GetCurrentSoflanTimeCached(
+            var currentSoflanTime = breakSoflanManager.GetCurrentSoflanTimeWithOffsetsCached(
+                MonitorId,
                 NotesManager.GetCurrentMsec(),
+                breakMaiBugAdjustMsec,
                 breakSoflanGroup);
             return breakNoteSoflanTime - currentSoflanTime;
         }

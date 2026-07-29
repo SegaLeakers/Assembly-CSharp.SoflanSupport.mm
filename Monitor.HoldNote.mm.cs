@@ -15,6 +15,7 @@ namespace Monitor
         private int holdSoflanGroup;
         private float holdHeadSoflanTime;
         private float holdTailSoflanTime;
+        private float holdMaiBugAdjustMsec;
 
         public extern void orig_Initialize(NoteData note);
 
@@ -23,14 +24,26 @@ namespace Monitor
             orig_Initialize(note);
 
             holdSoflanManager = Singleton<SoflanManager>.Instance;
-            holdIsInSoflan = holdSoflanManager.containsSoflans();
+            holdIsInSoflan = holdSoflanManager.containsSoflans(MonitorId);
             if (holdIsInSoflan)
             {
-                holdSoflanGroup = holdSoflanManager.getNoteSoflanGroup(NoteIndex);
-                var headAudioMsec = holdSoflanManager.getNoteAudioMsecForSoflan(NoteIndex, AppearMsec);
-                var tailAudioMsec = holdSoflanManager.getNoteEndAudioMsecForSoflan(NoteIndex, TailMsec);
-                holdHeadSoflanTime = holdSoflanManager.ConvertAudioTimeToY_PreviewMode(headAudioMsec, holdSoflanGroup);
-                holdTailSoflanTime = holdSoflanManager.ConvertAudioTimeToY_PreviewMode(tailAudioMsec, holdSoflanGroup);
+                holdSoflanGroup = holdSoflanManager.getNoteSoflanGroup(MonitorId, NoteIndex);
+                var headAudioMsec = holdSoflanManager.getNoteAudioMsecForSoflan(
+                    MonitorId,
+                    NoteIndex,
+                    AppearMsec);
+                var tailAudioMsec = holdSoflanManager.getNoteEndAudioMsecForSoflan(
+                    MonitorId,
+                    NoteIndex,
+                    TailMsec);
+                holdHeadSoflanTime = holdSoflanManager.ConvertAudioTimeToY_PreviewMode(
+                    MonitorId,
+                    headAudioMsec,
+                    holdSoflanGroup);
+                holdTailSoflanTime = holdSoflanManager.ConvertAudioTimeToY_PreviewMode(
+                    MonitorId,
+                    tailAudioMsec,
+                    holdSoflanGroup);
             }
             else
             {
@@ -38,6 +51,9 @@ namespace Monitor
                 holdHeadSoflanTime = AppearMsec;
                 holdTailSoflanTime = TailMsec;
             }
+            holdMaiBugAdjustMsec = SoflanVisualTiming.GetMaiBugAdjustMsec(
+                note.type.getEnum(),
+                2f * DefaultMsec);
         }
 
         public extern void orig_Execute();
@@ -47,7 +63,11 @@ namespace Monitor
             if (holdIsInSoflan && CheckSupportSoflan())
             {
                 float currentMsec = NotesManager.GetCurrentMsec();
-                float currentSoflanTime = holdSoflanManager.GetCurrentSoflanTimeCached(currentMsec, holdSoflanGroup);
+                float currentSoflanTime = holdSoflanManager.GetCurrentSoflanTimeWithOffsetsCached(
+                    MonitorId,
+                    currentMsec,
+                    holdMaiBugAdjustMsec,
+                    holdSoflanGroup);
 
                 float headDiffTime = holdHeadSoflanTime - currentSoflanTime;
                 float tailDiffTime = holdTailSoflanTime - currentSoflanTime;
@@ -69,8 +89,10 @@ namespace Monitor
 
             if (holdIsInSoflan && CheckSupportSoflan())
             {
-                float currentSoflanTime = holdSoflanManager.GetCurrentSoflanTimeCached(
+                float currentSoflanTime = holdSoflanManager.GetCurrentSoflanTimeWithOffsetsCached(
+                    MonitorId,
                     NotesManager.GetCurrentMsec(),
+                    holdMaiBugAdjustMsec,
                     holdSoflanGroup);
 
                 ApplySoflanScale(holdHeadSoflanTime - currentSoflanTime);
@@ -86,8 +108,8 @@ namespace Monitor
 
             UpdateHoldEffectVisual();
 
-            float moveStartTime = DefaultMsec - GetMaiBugAdjustMSec();
-            float scaleStartTime = 2f * DefaultMsec - GetMaiBugAdjustMSec();
+            float moveStartTime = DefaultMsec;
+            float scaleStartTime = 2f * DefaultMsec;
             float headY = GetHoldHeadYPositionSoflan(headDiffTime, moveStartTime, scaleStartTime);
 
             if (headY >= EndPos)
@@ -195,8 +217,8 @@ namespace Monitor
                 return;
             }
 
-            float moveStartTime = DefaultMsec - GetMaiBugAdjustMSec();
-            float scaleStartTime = 2f * DefaultMsec - GetMaiBugAdjustMSec();
+            float moveStartTime = DefaultMsec;
+            float scaleStartTime = 2f * DefaultMsec;
             float scale = headDiffTime <= moveStartTime
                 ? 1f
                 : Mathf.Clamp01((scaleStartTime - headDiffTime) / DefaultMsec);

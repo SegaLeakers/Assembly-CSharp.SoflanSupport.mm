@@ -6,6 +6,7 @@ using OngekiFumenEditor.Core.Base.Collections;
 using OngekiFumenEditor.Core.Base.OngekiObjects;
 using OngekiFumenEditor.Core.Modules.FumenVisualEditor;
 using OngekiFumenEditor.Core.Utils;
+using SoflanSupport;
 using System;
 
 namespace SoflanCalculator
@@ -31,6 +32,7 @@ namespace SoflanCalculator
         public float NoteSpeedValue;
         public float SpeedRatio;
         public float DefaultMsec;
+        public bool MaiBugAdjustEnabled;
         public float MaiBugAdjustMSec;
         public float StartPos;
         public float EndPos;
@@ -39,6 +41,10 @@ namespace SoflanCalculator
         public float AppearMsec;
         public float NoteSoflanTime;
         public float CurrentMsec;
+        public float RuntimeChartOffsetMsec;
+        public float RawChartCurrentMsec;
+        public float MaiBugAdjustedCurrentMsec;
+        public float RawCurrentSoflanTime;
         public float CurrentSoflanTime;
         public double CurrentSoflanSpeed;
 
@@ -50,6 +56,8 @@ namespace SoflanCalculator
         public NoteStat NoteStat;
         public float MoveProgress;
         public float FinalScale;
+        public float ObjectScaleProgress;
+        public float GuideAlpha;
         public float InsideY;
         public float OutsideY;
         public float SoflanY;
@@ -76,13 +84,17 @@ namespace SoflanCalculator
         /// <param name="noteSpeedValue">物件速度值 (对应 OptionNotespeedID.GetValue)</param>
         /// <param name="startPos">NoteStart Y 坐标 (从 Unity prefab 读取)</param>
         /// <param name="endPos">NoteEnd Y 坐标 (从 Unity prefab 读取)</param>
+        /// <param name="enableMaiBugAdjust">是否让 MaiBug 音频偏移参与 Soflan 计算</param>
+        /// <param name="runtimeChartOffsetMsec">原版 GetAdjustMSec() 加入运行时 note 时间的基础偏移</param>
         public static CalcResult Calculate(
             Ma2Data data,
             NoteRecord note,
             float currentMsec,
             float noteSpeedValue,
             float startPos,
-            float endPos)
+            float endPos,
+            bool enableMaiBugAdjust = true,
+            float runtimeChartOffsetMsec = 0f)
         {
             // --- 构建 BpmList ---
             // 与 SoflanManager.loadComposition 一致:
@@ -122,8 +134,7 @@ namespace SoflanCalculator
             float speedRatio = noteSpeedValue / 150f;
             // DefaultMsec = GetNoteSpeedForBeat * 4 = (60000 / NoteSpeedValue) * 4 = 240000 / NoteSpeedValue
             float defaultMsec = 240000f / noteSpeedValue;
-            // GetMaiBugAdjustMSec = (speedRatio - 1) * (-0.5f / speedRatio) * 1.6f * 1000f / 60f
-            float maiBugAdjustMSec = (speedRatio - 1f) * (-0.5f / speedRatio) * 1.6f * 1000f / 60f;
+            float maiBugAdjustMSec = MaiBugAdjust.Calculate(noteSpeedValue, enableMaiBugAdjust);
 
             // --- AppearMsec 计算 ---
             // bar/grid → TGrid → TGridCalculator.ConvertTGridToAudioTime → msec
@@ -138,14 +149,26 @@ namespace SoflanCalculator
             var soflanList = soflanMap[soflanGroup];
             float noteSoflanTime = (float)TGridCalculator.ConvertAudioTimeToY_PreviewMode(
                 TimeSpan.FromMilliseconds(appearMsec), soflanList, bpmList, 1);
+            float normalizedRuntimeChartOffsetMsec =
+                SoflanRuntimeTime.NormalizeRuntimeChartOffsetMsec(runtimeChartOffsetMsec);
+            float rawChartCurrentMsec = SoflanRuntimeTime.ToRawChartAudioMsec(
+                currentMsec,
+                normalizedRuntimeChartOffsetMsec,
+                0f);
+            float rawCurrentSoflanTime = (float)TGridCalculator.ConvertAudioTimeToY_PreviewMode(
+                TimeSpan.FromMilliseconds(rawChartCurrentMsec), soflanList, bpmList, 1);
+            float maiBugAdjustedCurrentMsec = SoflanRuntimeTime.ToRawChartAudioMsec(
+                currentMsec,
+                normalizedRuntimeChartOffsetMsec,
+                maiBugAdjustMSec);
             float currentSoflanTime = (float)TGridCalculator.ConvertAudioTimeToY_PreviewMode(
-                TimeSpan.FromMilliseconds(currentMsec), soflanList, bpmList, 1);
+                TimeSpan.FromMilliseconds(maiBugAdjustedCurrentMsec), soflanList, bpmList, 1);
 
             // --- 当前变速速度 ---
             // 与 SoflanManager.GetCurrentSpeed 一致: currentTime → TGrid → SoflanList.CalculateSpeed.
             // 无 SFL 或无该组时, SoflanList 为空 → CalculateSpeed 返回 1.0.
             var currentTGrid = TGridCalculator.ConvertAudioTimeToTGrid(
-                TimeSpan.FromMilliseconds(currentMsec), bpmList);
+                TimeSpan.FromMilliseconds(rawChartCurrentMsec), bpmList);
             double currentSoflanSpeed = soflanList.CalculateSpeed(bpmList, currentTGrid);
 
             // --- GetNoteYPosition_soflan 逻辑 ---
@@ -153,19 +176,18 @@ namespace SoflanCalculator
             float diffTime = noteSoflanTime - currentSoflanTime;
             float absDiffTime = Math.Abs(diffTime);
 
-            float scaleStartTime = 2f * defaultMsec - maiBugAdjustMSec;
-            float moveStartTime = defaultMsec - maiBugAdjustMSec;
+            float scaleStartTime = 2f * defaultMsec;
+            float moveStartTime = defaultMsec;
 
-            // offsetYAdj (与游戏一致, 但 sign=0 故 adjustedSoflanY == soflanY)
-            float offsetYAdj = (endPos - startPos) * (-1f / 120f) * (speedRatio - 1f);
+            // MaiBug 音频偏移已经随 currentMsec 一起映射进 Soflan Y，
+            // 因而无需再叠加独立的坐标偏移。
             float guideScaleAdj = 0f;
 
             float insideY = startPos;
             float outsideY = endPos + (endPos - startPos);
 
             float soflanY = MathUtils.MapValue(diffTime, -moveStartTime, moveStartTime, outsideY, insideY);
-            // sign = 0 (与游戏当前代码一致)
-            float adjustedSoflanY = soflanY; // + sign * offsetYAdj  (sign=0)
+            float adjustedSoflanY = soflanY;
 
             float clipedSoflanY = Math.Max(120f, Math.Min(680f, adjustedSoflanY));
 
@@ -177,31 +199,49 @@ namespace SoflanCalculator
             float finalScale = 0.25f + adjustedGuideScale;
 
             NoteStat noteStat = NoteStat.Init;
+            float guideAlpha;
 
             if (absDiffTime > scaleStartTime)
             {
                 // 不修改 NoteStat (保持 Init, Guide 隐藏)
+                guideAlpha = 0f;
             }
             else if (absDiffTime > moveStartTime)
             {
                 noteStat = NoteStat.Scale;
+                guideAlpha = MathUtils.MapValue(
+                    absDiffTime,
+                    scaleStartTime,
+                    moveStartTime,
+                    0f,
+                    1f);
             }
             else
             {
                 noteStat = NoteStat.Move;
+                guideAlpha = 1f;
             }
+
+            float objectScaleProgress = Math.Max(
+                0f,
+                Math.Min(1f, (scaleStartTime - absDiffTime) / defaultMsec));
 
             return new CalcResult
             {
                 NoteSpeedValue = noteSpeedValue,
                 SpeedRatio = speedRatio,
                 DefaultMsec = defaultMsec,
+                MaiBugAdjustEnabled = enableMaiBugAdjust,
                 MaiBugAdjustMSec = maiBugAdjustMSec,
                 StartPos = startPos,
                 EndPos = endPos,
                 AppearMsec = appearMsec,
                 NoteSoflanTime = noteSoflanTime,
                 CurrentMsec = currentMsec,
+                RuntimeChartOffsetMsec = normalizedRuntimeChartOffsetMsec,
+                RawChartCurrentMsec = rawChartCurrentMsec,
+                MaiBugAdjustedCurrentMsec = maiBugAdjustedCurrentMsec,
+                RawCurrentSoflanTime = rawCurrentSoflanTime,
                 CurrentSoflanTime = currentSoflanTime,
                 CurrentSoflanSpeed = currentSoflanSpeed,
                 DiffTime = diffTime,
@@ -211,6 +251,8 @@ namespace SoflanCalculator
                 NoteStat = noteStat,
                 MoveProgress = moveProgress,
                 FinalScale = finalScale,
+                ObjectScaleProgress = objectScaleProgress,
+                GuideAlpha = guideAlpha,
                 InsideY = insideY,
                 OutsideY = outsideY,
                 SoflanY = soflanY,

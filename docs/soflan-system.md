@@ -1,12 +1,14 @@
 # Soflan 变速系统说明
 
+本文是当前运行时行为的规范说明。构建部署见 [构建与部署](build-and-deployment.md)，配置、日志、暂停快捷键和 DEBUG 面板见 [配置、日志与调试](configuration-and-debugging.md)，仓库功能入口见 [文档索引](README.md)。
+
 ## 定位
 
 本项目的 Soflan 支持是一个 MonoMod patch。它把 MA2 谱面里的变速区间读入 `SoflanManager`，再在游戏播放时用 Soflan 时间轴驱动物件的可见性和视觉位置。
 
 这里的 Soflan 指“视觉时间轴变速”，不是改变音频播放速度，也不是改变判定时间。判定仍按原始音频时间执行；Soflan 只改变物件何时出现、如何移动、如何缩放，以及某些类型的原版动画时间轴。
 
-当前实现依赖 `SimpleSoflanFramework.Core`：
+当前实现使用 `SimpleSoflanFramework.Core` 的源码；它通过 Shared Project 直接编入 patch `.mm.dll`，运行时不需要额外部署 Core DLL：
 
 - `SoflanListMap` 按 group 管理多条 Soflan 区间。
 - `BpmList` 管理谱面 BPM 变化。
@@ -17,7 +19,7 @@
 当前变速系统提供以下能力：
 
 - 从 MA2 文件读取 `SFL` 行，建立 Soflan 变速区间。
-- 从 note record 读取 `#N` marker，把单个物件挂到 Soflan group。
+- 从 note record 读取 `#group` marker，把单个物件挂到 Soflan group；group 支持有符号 `int`。
 - 支持每个物件独立选择 group，未声明时默认 group `0`。
 - 播放时按当前音频时间计算当前 Soflan 时间。
 - 在 `GameCtrl.UpdateCtrl` 的物件注册前替换可见性判断，让反向、停车、弹跳等变速下的物件可以正常被创建。
@@ -26,6 +28,28 @@
 - 对 TouchNoteB / TouchNoteC 使用 Soflan 时间轴驱动原版 Touch 显示动画。
 - 提供 DEBUG 调试面板，显示当前 group 速度、选中 Tap 的 Soflan 计算数据。
 - 支持 FixedSoflan 扩展，使指定 Tap 系物件按固定视觉速度计算进度，避免玩家物件速度影响弹跳表现。
+- 提供 Release/Debug 都可用的 `P` 键暂停/恢复，并在 NoteGuide 回池时清除 each guide 残留。这两项运维行为不依赖谱面是否含 SFL。
+
+## mai2.ini 开关
+
+`GetMaiBugAdjustMSec()` 是否参与 Soflan 视觉时间轴由游戏目录下的 `mai2.ini` 控制：
+
+```ini
+[Patches]
+EnablePatchLog=1
+EnableSoflanMaiBugAdjust=1
+```
+
+- `EnablePatchLog` 只控制 Debug INFO 日志；ERROR 在 Release/Debug 中都不受它控制。
+- 配置缺失时默认启用。
+- `1` 表示启用，`0` 表示关闭；游戏的 `IniFile` 按整数读取该布尔项。
+- 配置在游戏启动后首次使用 Soflan 视觉时读取一次；修改后需要重启游戏。
+- 启用时，Tap / Break / Star / Hold / BreakHold 的 MaiBug 音频毫秒偏移会经过 Soflan 积分。
+- 关闭时，上述物件和 `GameCtrl` 可见性注册统一使用 `0ms` 偏移；Touch 原本就不使用该偏移，因此不受开关影响。
+- 无论开关状态如何，运行时当前时间都会先减去该玩家快照的 `GetAdjustMSec()`；该基础时间轴转换不属于 MaiBug 开关。
+- 该开关只改变 Soflan 视觉显示，不改变音频时间、判定时间或原版无 SFL 谱面的逻辑。
+
+完整开关、日志级别和读取时机见 [配置、日志与调试](configuration-and-debugging.md#mai2ini)。
 
 ## MA2 命令支持
 
@@ -36,7 +60,7 @@
 当前解析格式按 tab 字段读取：
 
 ```text
-SFL    grid    unit    length    speed    group
+SFL    unit    grid    length    speed    group
 ```
 
 字段含义：
@@ -44,8 +68,8 @@ SFL    grid    unit    length    speed    group
 | 字段 | 位置 | 含义 |
 | --- | ---: | --- |
 | `SFL` | 0 | 行类型，大小写不敏感 |
-| `grid` | 1 | 起点 TGrid 的 grid |
-| `unit` | 2 | 起点 TGrid 的 unit |
+| `unit` | 1 | 起点 TGrid 的 unit；MA2 中通常表示 bar |
+| `grid` | 2 | 起点 TGrid 的 bar 内 grid |
 | `length` | 3 | 持续长度，作为 `GridOffset(0, length)` 加到起点 |
 | `speed` | 4 | 变速倍率 |
 | `group` | 5 | Soflan group，可空；为空时使用 group `0` |
@@ -55,7 +79,7 @@ SFL    grid    unit    length    speed    group
 ```csharp
 new Soflan
 {
-    TGrid = new TGrid(grid, unit),
+    TGrid = new TGrid(unit, grid),
     EndTGrid = TGrid + new GridOffset(0, length),
     Speed = speed,
     SoflanGroup = groupOrZero
@@ -65,13 +89,15 @@ new Soflan
 说明：
 
 - `speed` 是倍率，不是玩家物件速度。例如 `1.0` 表示正常视觉速度，`0` 表示停车，负数表示视觉时间轴反向。
+- `group` 由 `int.Parse()` 读取，可使用有符号 32 位整数；空字段才回退为 `0`。
 - 当前代码使用 `float.Parse()` 和 `int.Parse()` 解析字段；字段非法时该行解析失败。
+- loader 不额外校验 length、speed 的有限性或区间合理性。`0` 和负 speed 是合法功能，但谱面作者仍应避免 NaN、Infinity、无效负 length 等可被基础 parser 接受却没有可靠视觉语义的数据。
 - `SFL` 解析失败时会写日志 `parse soflan failed` 并停止继续读取后续 `SFL` 行。
 - 当前 loader 只直接消费 MA2 的 `SFL` 行，不直接解析 MajSimai 的 `<HS...>` 命令。
 
 ### Note group marker
 
-note record 中可以加入以 `#` 开头的 marker，把该物件挂到 Soflan group。
+note record 中可以加入 `#groupFspeed` marker，把该物件挂到 Soflan group。marker 可位于混合扩展字段中的任意位置，读取器使用正则提取连续的 Soflan token，不要求整个字段以 `#` 开头。
 
 支持语法：
 
@@ -79,15 +105,23 @@ note record 中可以加入以 `#` 开头的 marker，把该物件挂到 Soflan 
 #0
 #1
 #219
+#+12
+#-2
+!m#1
+#1!m!y
+!y!m#1
 ```
 
 含义：
 
 - `#1` 表示该 note 使用 Soflan group `1`。
+- group 语法是 invariant-culture 的有符号十进制 `int`，所以 `#+12` 和 `#-2` 也会被运行时接受；谱面中的 `SFL` group 必须使用同一数值才能对应。
 - 未写 marker 的 note 使用 group `0`。
-- 同一个 note record 只能有一个以 `#` 开头的 Soflan marker。
+- 同一个 note record 只能匹配到一个 Soflan marker。
+- `!m`、`!y` 等以 `!` 开头的私有修饰可出现在 Soflan token 前后，不会成为 group 或 fixed speed 的一部分。
+- marker 必须是连续 token；空白、第二个 `#` 或粘连的普通字符都会使格式校验失败。
 
-当前 marker 是本 patch 的扩展语法。它由 `SoflanManager.loadNote()` 扫描 `record._str` 得到，不是原版游戏公开 API。
+当前 marker 是本 patch 的扩展语法。它由共享 `SoflanMarkerParser` 对 `record._str` 执行 `Regex.Matches()` 得到，运行时、`SoflanCalculator` 和 `MajdataValidation` 使用同一解析器；这不是原版游戏公开 API。
 
 ### FixedSoflan marker
 
@@ -98,6 +132,7 @@ FixedSoflan 在 group marker 后追加 `F` 或 `f`：
 #1F600
 #F
 #F750
+#-2F750.5
 ```
 
 简要含义：
@@ -124,7 +159,7 @@ MajdataEdit / MajSimaiX 支持未定义组号语法 `<HS?*speed>(...)`。该语�
 
 - 每个 `<HS?*...>(...)` 都定义一个新的独立变速组。
 - 解析器内部用负数组号 `-1, -2, ...` 表示这些组，编辑器频谱标签显示为 `[?]`。
-- 导出 MA2 时才分配最终正数组号；运行时只会看到普通正整数 group。
+- 导出 MA2 时才分配最终正数组号，因此正常导出结果通常是正整数 group；运行时 parser 本身仍接受有符号 group。
 - 分配规则为：设显式手动组号最大值为 `M`，自动组从 `10^(M 的十进制位数)` 开始；若没有显式非 0 组号，则从 `10` 开始。
 - 多个自动组按首次出现顺序依次分配，例如显式最大组号为 `122` 时，自动组导出为 `1000`、`1001`、`1002` ...
 - 自动组内的 FixedSoflan 物件也会随映射导出，例如 `<HS?*1.5>(4@600)` 可能导出为 `#10F600`。
@@ -141,13 +176,13 @@ MA2 加载阶段通过 `MonoModRules` 对 `NotesReader` 做 IL 插入。
 
 流程：
 
-1. `NotesReader.loadMa2Main()` 调用 `calcBPMList` 前执行 `__SoflanClearAll()`。
-2. `__SoflanClearAll()` 清空 `SoflanManager`、可见区间缓存、当前 Soflan 时间缓存和调试面板选中 note。
-3. `NotesReader.loadMa2Main()` 调用 `calcTotal` 后执行 `__SoflanLoadComposition(records, sr)`。
-4. `SoflanManager.loadComposition()` 重新读取 MA2 文件，扫描所有 `SFL` 行，写入 `SoflanListMap`。
-5. `loadComposition()` 同时从 `sr.GetCompositioin()._bpmList` 建立 `BpmList`。
-6. `NotesReader.loadNote()` 返回前执行 `__SoflanLoadNote(noteData, rec, sr)`。
-7. `SoflanManager.loadNote()` 扫描该 note record 的 `#...` marker，登记 `noteIndex -> soflanGroup`。
+1. `NotesReader.loadMa2Main()` 调用 `calcBPMList` 前执行 `__SoflanClearPlayer(_playerID)`。
+2. `__SoflanClearPlayer()` 只清空当前玩家的 Soflan 数据和缓存，不覆盖另一名玩家。
+3. `NotesReader.loadMa2Main()` 调用 `calcTotal` 后执行 `__SoflanLoadComposition(records, sr, _playerID)`。
+4. `SoflanManager.loadComposition()` 重新读取 MA2 文件，扫描所有 `SFL` 行，写入该玩家的 `SoflanListMap`。
+5. `loadComposition()` 同时建立该玩家的 `BpmList`，并快照同一玩家的 `UserOption.GetAdjustMSec()`。
+6. `NotesReader.loadNote()` 返回前执行 `__SoflanLoadNote(noteData, rec, sr, _playerID)`。
+7. `SoflanManager.loadNote()` 使用共享正则提取 `#groupFspeed`，按玩家登记 `noteIndex -> soflanGroup/TGrid`。
 8. 若 marker 带 `F`，同时写入 `NoteData.isFixedSoflanToUnifiedSpeed` 和 `fixedSoflanUnifiedSpeed`。
 
 如果谱面没有任何 `SFL` 行，`containSoflans` 保持 false。播放时各 note patch 会回退到原版逻辑。
@@ -161,17 +196,19 @@ MA2 加载阶段通过 `MonoModRules` 对 `NotesReader` 做 IL 插入。
 `GameCtrl.UpdateCtrl` 在读取玩家 option 后调用：
 
 ```csharp
-SoflanManager.clearCurrentSoflanTimeCache()
+SoflanManager.clearCurrentSoflanTimeCache(monitorIndex)
 ```
 
-这会让同一帧里不同 note 共享 `group -> currentSoflanTime` 缓存，同时避免跨帧复用旧时间。
+这会让同一帧、同一玩家的不同 note 共享
+`(group, runtimeChartOffsetMsec, maiBugAdjustMsec) -> currentSoflanTime`
+缓存，同时避免跨帧或跨玩家复用旧时间。
 
 ### 可见性派发
 
 原版 `GameCtrl.UpdateCtrl` 会用音频时间和玩家物件速度判断 note 是否进入可见窗口。本 patch 在原可见性检查前插入：
 
 ```csharp
-__SoflanNoteDecision(note, num)
+__SoflanNoteDecision(note, num, monitorIndex)
 ```
 
 返回值含义：
@@ -186,13 +223,21 @@ Soflan 可见性判断使用：
 
 ```csharp
 currentMsec = NotesManager.GetCurrentMsec()
-group = getNoteSoflanGroup(note)
-currentSoflanTime = GetCurrentSoflanTimeCached(currentMsec, group)
+group = getNoteSoflanGroup(monitorIndex, note)
 visibleMsec = FixedSoflan.IsEnabledForNote(note) ? FixedSoflanVisibleMsec : num
-checkNoteVisible(note, currentMsec, visibleMsec, group, currentSoflanTime)
+maiBugAdjustMsec = SoflanVisualTiming.GetMaiBugAdjustMsec(note.type, visibleMsec)
+currentSoflanTime = GetCurrentSoflanTimeWithOffsetsCached(
+    monitorIndex,
+    currentMsec,
+    maiBugAdjustMsec,
+    group)
+checkNoteVisible(monitorIndex, note, currentMsec, visibleMsec, group, currentSoflanTime)
 ```
 
 `num` 是原版按玩家物件速度得到的可见时间窗。FixedSoflan 物件会改用固定速度时间窗。
+所有类型先从 `currentMsec` 移除玩家级 `GetAdjustMSec()`；Tap/Star/Break/Hold 系
+随后再加入原版 `GetMaiBugAdjustMSec()` 并映射进 Soflan 时间轴，Touch 的 MaiBug
+保持为 `0ms`。
 
 ## 时间轴原理
 
@@ -201,12 +246,23 @@ checkNoteVisible(note, currentMsec, visibleMsec, group, currentSoflanTime)
 Soflan 谱面里，本系统先把音频时间映射到 Soflan Y：
 
 ```csharp
-currentSoflanTime = ConvertAudioTimeToY_PreviewMode(currentAudioMsec, group)
+rawCurrentAudioMsec = currentAudioMsec - runtimeChartOffsetMsec
+adjustedCurrentAudioMsec = rawCurrentAudioMsec + maiBugAdjustMsec
+currentSoflanTime = ConvertAudioTimeToY_PreviewMode(adjustedCurrentAudioMsec, group)
 noteSoflanTime = ConvertAudioTimeToY_PreviewMode(noteAudioMsec, group)
 diffTime = noteSoflanTime - currentSoflanTime
 ```
 
-这里的 `currentSoflanTime` 不是实际音频毫秒，而是经过 Soflan 速度积分后的视觉时间轴位置。命名里仍带 `Time`，是为了和原 note 逻辑中的 msec 概念对应。
+`runtimeChartOffsetMsec` 是该玩家在谱面加载时快照的
+`UserOption.GetAdjustMSec()`。原版运行时 note 时间包含该偏移，而 MA2 TGrid、BPM 和
+SFL 边界从 `0ms` 开始；所以统一公式为：
+
+```text
+diff = F_group(noteRawMsec) - F_group(runtimeCurrentMsec - J + a)
+```
+
+其中 `J=GetAdjustMSec()`，`a=GetMaiBugAdjustMSec()`。`currentSoflanTime`
+不是实际音频毫秒，而是经过 Soflan 速度积分后的视觉时间轴位置。
 
 ### Soflan Y 积分
 
@@ -284,7 +340,9 @@ note.time.msec 是否落在任意 visible range 内
 - 每帧或 `visibleMsec` 改变时递增 `visibleRangeCacheVersion`。
 - 只有某一帧实际检查到某个 group 时，才重建该 group 的可见范围。
 - 同一帧同一 group 后续 note 复用 `VisibleMsecRangeCache.Ranges`。
-- 同一帧同一 group 的 `currentSoflanTime` 也通过 `GetCurrentSoflanTimeCached()` 复用。
+- 同一帧相同 `(player, group, runtimeChartOffsetMsec, maiBugAdjustMsec)` 的
+  `currentSoflanTime` 通过 `GetCurrentSoflanTimeWithOffsetsCached()` 复用；零偏移调用仍由
+  `GetCurrentSoflanTimeCached()` 转发到同一缓存。
 
 ## Tap / Break / Star 视觉算法
 
@@ -293,13 +351,30 @@ Tap 系物件通过 `NoteBase.GetNoteYPosition_soflan()` 重算 Y。
 基础变量：
 
 ```csharp
+maiBugAdjustMsec = EnableSoflanMaiBugAdjust
+    ? MaiBugAdjust.Calculate(noteSpeed)
+    : 0
+rawCurrentAudioMsec = currentAudioMsec - runtimeChartOffsetMsec
+adjustedCurrentAudioMsec = rawCurrentAudioMsec + maiBugAdjustMsec
+currentSoflanTime = ConvertAudioTimeToY_PreviewMode(adjustedCurrentAudioMsec, group)
 diffTime = noteSoflanTime - currentSoflanTime
 absDiffTime = Abs(diffTime)
-moveStartTime = DefaultMsec - GetMaiBugAdjustMSec()
-scaleStartTime = 2 * DefaultMsec - GetMaiBugAdjustMSec()
+moveStartTime = DefaultMsec
+scaleStartTime = 2 * DefaultMsec
 insideY = StartPos
 outsideY = EndPos + (EndPos - StartPos)
 ```
+
+`GetMaiBugAdjustMSec()` 返回的是音频毫秒，不能直接与 Soflan Y 距离相减。把
+`currentAudioMsec + adjustMsec` 整体交给 Soflan 转换后，1x 时可还原原版时序，
+加速、减速、停车、反向和跨 SFL 边界时则由积分结果自动决定视觉偏移。
+若偏移后的音频时间小于 `0`，会钳到谱面起点，避免 `TGridCalculator` 在首帧得到
+无效的负时间 TGrid。
+
+当 `EnableSoflanMaiBugAdjust=0` 时，`adjustMsec` 为 `0`，所以
+`adjustedCurrentAudioMsec == currentAudioMsec - runtimeChartOffsetMsec`。
+基础时间轴换算始终存在，开关只控制 MaiBug；移动和缩放门槛仍保持纯
+`DefaultMsec / 2*DefaultMsec`。
 
 普通 Soflan Y：
 
@@ -327,7 +402,7 @@ guide 状态：
 本体缩放在 `NoteCheck()` 后重算：
 
 ```csharp
-scale = Clamp01((2 * DefaultMsec - GetMaiBugAdjustMSec() - absDiffTime) / DefaultMsec)
+scale = Clamp01((2 * DefaultMsec - absDiffTime) / DefaultMsec)
 scale *= UserOption.NoteSize
 ```
 
@@ -340,8 +415,11 @@ Star / BreakStar 属于 Tap base 类型，因此位置和缩放跟随 `NoteBase`
 Hold 和 BreakHold 使用头尾两个 Soflan 时间：
 
 ```csharp
-headSoflanTime = ConvertAudioTimeToY_PreviewMode(AppearMsec, group)
-tailSoflanTime = ConvertAudioTimeToY_PreviewMode(TailMsec, group)
+headSoflanTime = ConvertAudioTimeToY_PreviewMode(headRawMsec, group)
+tailSoflanTime = ConvertAudioTimeToY_PreviewMode(tailRawMsec, group)
+currentSoflanTime = ConvertAudioTimeToY_PreviewMode(
+    currentAudioMsec - runtimeChartOffsetMsec + maiBugAdjustMsec,
+    group)
 headDiffTime = headSoflanTime - currentSoflanTime
 tailDiffTime = tailSoflanTime - currentSoflanTime
 ```
@@ -378,10 +456,13 @@ TouchNoteB 不是普通 Tap 的 Y 轴移动。它的原版视觉语义是：
 Soflan patch 保留这个语义，只把时间轴替换为 Soflan 时间：
 
 ```csharp
-currentSoflanTime = GetCurrentSoflanTimeCached(currentMsec, group)
+currentSoflanTime = GetCurrentSoflanTimeCached(monitorId, currentMsec, group)
 touchDispTime = DefaultMsec * 0.25
 soflanStartTime = touchNoteSoflanTime - DefaultMsec - touchDispTime
 ```
+
+`GetCurrentSoflanTimeCached()` 的零视觉偏移仍会先执行 `currentMsec-J`；Touch
+不使用 MaiBug，但不能跳过运行时轴到 MA2 原始轴的转换。
 
 三段逻辑：
 
@@ -416,8 +497,9 @@ FixedSoflan 是 Tap 系 Soflan 的补充模式。普通 Soflan 的移动时间�
 ```csharp
 DefaultMsec = 240000 / 600 = 400ms
 MaiBugAdjustMSec = -10ms
-MoveStartTime = 410ms
-ScaleStartTime = 810ms
+AdjustedCurrentAudioMsec = CurrentAudioMsec - 10ms
+MoveStartTime = 400 Soflan-Y ms
+ScaleStartTime = 800 Soflan-Y ms
 VisibleMsec = 800ms
 ```
 
@@ -436,18 +518,18 @@ y = Lerp(StartPos, outsideY, motionProgress)
 | --- | --- | --- | --- |
 | MA2 `SFL` duration 行 | 支持 | 不适用 | 直接解析为 `Soflan` 区间 |
 | MA2 BPM 变化 | 支持 | 支持 | 从 composition BPM 列表读入 |
-| note `#N` group marker | 支持 | 不适用 | 本 patch 扩展 |
-| note `#NF` / `#NF600` | 支持 group | 支持 Tap 系 | 本 patch 扩展 |
+| note `#group` group marker | 支持 | 不适用 | 本 patch 扩展；group 是有符号 `int` |
+| note `#groupF` / `#groupF600` | 支持 group | 支持 Tap 系 | 本 patch 扩展 |
 | Tap | 支持 | 支持 |
 | Break | 支持 | 支持 |
 | ExTap / ExBreakTap | 支持 | 支持 |
 | Star / BreakStar / ExStar / ExBreakStar | 支持 | 支持位置和缩放，不单独改旋转 |
-| Hold | 支持 | 不支持 |
-| BreakHold | 支持 | 不支持 |
+| Hold / ExHold | 支持 | 不支持 |
+| BreakHold / ExBreakHold | 支持 | 不支持 |
 | TouchNoteB | 支持 | 不支持 |
 | TouchNoteC | 支持 | 不支持 |
 | TouchHoldC | 不支持本次 TouchTap 逻辑 | 不支持 |
-| Slide | 未专门支持 | 不支持 |
+| Slide 路径及内部星标 | 未专门支持 | 不支持 | 设计记录不代表已经实现 |
 | MajSimai `<HS...>` 文本 | 不直接支持 | 不直接支持 | 需要上游转换为 MA2 `SFL` |
 | SimpleSoflan `InterpolatableSoflan` | 框架支持 | 不适用 | 当前 MA2 loader 不直接生成 |
 | SimpleSoflan `KeyframeSoflan` | 框架支持 | 不适用 | 当前 MA2 loader 不直接读取独立 keyframe 命令 |
@@ -470,6 +552,9 @@ note marker 解析更严格：
 
 - 多个 `#...` marker 会写日志并抛 `FormatException`。
 - 空 marker、内部空白、非法 group、非法 FixedSoflan speed 都会写日志并抛 `FormatException`。
+- group 必须落在有符号 32 位整数范围内；正号和负号本身合法。
+- `#1!m!y`、`!y!m#1`、`!m#1F600!y` 等排列会先由正则抽出连续的 `#1` 或 `#1F600`，其他私有修饰保持独立。
+- marker 与 SFL 格式错误使用 Release 无条件 `PatchLog.Error`，后台写入 UTF-8 without BOM 的 `dpSoflanSupport.log` 并尝试转发 Unity Error；普通 INFO 日志仍只在 Debug 且受配置开关控制。
 
 ### 缺失 group
 
@@ -479,7 +564,7 @@ note marker 解析更严格：
 
 没有任何 `SFL` 行时：
 
-- `SoflanManager.containsSoflans()` 为 false。
+- `SoflanManager.containsSoflans(playerId)` 为 false。
 - `GameCtrl.__SoflanNoteDecision()` 返回 `0`。
 - 各 note 显示逻辑回到原版。
 - note marker 本身仍可能被解析登记，但不会驱动 Soflan 视觉。
@@ -491,11 +576,15 @@ DEBUG 构建会挂载 Soflan Monitor 面板。
 面板能力：
 
 - `F8` 显示/隐藏。
-- 显示当前播放时间。
+- 显示当前 monitor、播放时间和该玩家快照的 `GetAdjustMSec()`。
 - 显示 group `0` 当前速度。
 - 可选显示前 50 个 group 的当前速度。
 - 右键选中 Tap，显示 diffTime、scaleStartTime、moveStartTime、moveProgress、finalScale、Y 等数据。
 - FixedSoflan Tap 会额外显示 fixed speed、fixed motion progress 和 fixed scale progress。
+- 选中 Tap 会显示 monitor、运行时钟、基础偏移、MaiBug、最终 MA2 原始轴时间以及原始/偏移后 Soflan 时间。
+- 面板顶部及选中 Tap 数据会显示 `MaiBugAdjust: Enabled/Disabled`，用于确认 `mai2.ini` 开关是否生效。
+
+面板默认位于右上角、约每 0.2 秒刷新；未选择 note 时显示 monitor `0`。`P` 键暂停/恢复在 Release 和 Debug 中都存在。完整交互、日志和限制见 [配置、日志与调试](configuration-and-debugging.md)。
 
 建议验证：
 
@@ -504,23 +593,39 @@ DEBUG 构建会挂载 Soflan Monitor 面板。
 - `speed = 0` 停车：物件应停在视觉时间轴对应位置，可见性不应丢 note。
 - 负速回拉：物件可被可见性判断重新注册到屏幕范围。
 - 多 group：不同 note 的 `#N` marker 应只影响各自 group。
+- 混合修饰：`#1!m!y` 与 `!y!m#1` 都应登记为 group `1`。
 - TouchNoteB / TouchNoteC：应保留原版固定触摸区动画，而不是变成普通 Tap Y 轴移动。
 - Hold / BreakHold：头尾和 body 长度应跟随 Soflan 时间轴。
 - FixedSoflan 弹跳 Tap：不同玩家物件速度下，弹跳开始时机和判定线对齐应保持一致。
+- P1/P2 使用不同 AdjustTiming 或不同谱面时，BPM、SFL、note map、当前时间和可见范围缓存不得互相覆盖。
+- `EnableSoflanMaiBugAdjust=0`：600 速度、1x SFL 的判定时 `diffTime` 应为 `0`，物件 Y 应回到 `EndPos`。
+- `EnableSoflanMaiBugAdjust=1` 或缺失：600 速度、1x SFL 的判定时应保留约 `7px` 的原版 MaiBug 位置滞后。
 
 构建验证：
 
 ```powershell
 dotnet build -c Release Assembly-CSharp.SoflanSupport.mm.csproj
 dotnet build -c Debug Assembly-CSharp.SoflanSupport.mm.csproj
+dotnet run --project tools/SoflanMarkerTests/SoflanMarkerTests.csproj -c Release
+dotnet run --project tools/SoflanLogTests/SoflanLogTests.csproj -c Release
+dotnet run --project tools/SoflanMaiBugTests/SoflanMaiBugTests.csproj -c Release
+
+# 可选真实谱面对比：复杂变速轨迹 + 无 SFL/恒定 1x 全阶段视觉对照
+dotnet run --project tools/SoflanMaiBugTests/SoflanMaiBugTests.csproj -c Release -- `
+  "F:\yourGame\Package\option\yourOption\music\yourMusic\example_04.ma2" `
+  "F:\yourGame\Package\option\yourOption\music\yourMusic\example_01.ma2"
 ```
 
 静态 patch 验证建议：
 
-- `NotesReader.loadMa2Main` 包含 clear/load composition 插入。
-- `NotesReader.loadNote` 包含 load note marker 插入。
-- `GameCtrl.UpdateCtrl` 包含 Soflan 可见性派发。
+- `NotesReader.loadMa2Main` 把 `_playerID` 传给 clear/load composition 插入。
+- `NotesReader.loadNote` 把 `_playerID` 传给 load note marker 插入。
+- `SoflanMarkerParser.TryParse` 调用 `Regex.Matches`，并被 `SoflanManager.loadNote` 与 `SoflanCalculator` 共用。
+- `GameCtrl.UpdateCtrl` 把 `monitorIndex` 传给缓存清理和 Soflan 可见性派发。
+- `SoflanManager` 含按玩家隔离的 `PlayerSoflanState`，统一入口为 `GetCurrentSoflanTimeWithOffsetsCached()`。
 - `NoteBase.GetNoteYPosition` 存在 Soflan 分支。
 - `HoldNote.Execute` / `BreakHoldNote.Execute` 存在 Soflan visual 分支。
 - `TouchNoteB.GetNoteYPosition` 存在 Soflan 分支。
 - 输出目录只包含 `.mm.dll` 和 `.pdb`。
+
+主项目构建、内嵌依赖和 BepInEx 部署见 [构建与部署](build-and-deployment.md)；计算器、转换器、验证器和各测试的具体边界见 [离线工具与验证](tools.md)。

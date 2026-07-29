@@ -1,5 +1,7 @@
 # Soflan 支持代码性能复查（2026-07）
 
+> 文档状态：这是 2026-07 的性能快照，不是功能或部署规范。当前功能边界见 [文档索引](README.md)，当前构建模型见 [构建与部署](build-and-deployment.md)。评审后 `SimpleSoflanFramework.Core` 已改为 Shared Project 源码内嵌，不再部署独立 Core DLL。
+
 ## 结论
 
 当前实现存在可确认的 Release 播放期性能问题。最高优先级不是 Note 位置计算本身，而是 `GameCtrl.UpdateCtrl` 在原版时间窗过滤前扫描所有尚未注册 note，并为每个 note 重复执行 TGrid 到音频毫秒的转换。
@@ -20,7 +22,7 @@
 检查范围：
 
 - MonoMod patch 运行时代码：`SoflanSupport/`、`Monitor.*.mm.cs`、`Manager.*.mm.cs`、`Process.*.mm.cs`、`MonoModRules.cs`。
-- 随补丁部署的 `Dependencies/SimpleSoflanFramework/SimpleSoflanFramework.Core/`。
+- 通过 Shared Project 内嵌进 patch 的 `Dependencies/SimpleSoflanFramework/SimpleSoflanFramework.Core/`。
 - 原版 `Assembly-CSharp.dll` 的 `GameCtrl.UpdateCtrl` / `Initialize` IL，以及当前 Release/Debug `.mm.dll` 产物 IL。
 - 现有两份专项评审：`many-soflan-groups-performance-review.md`、`gc-paused-memory-risk-review.md`。
 
@@ -158,7 +160,7 @@ Soflan 段从 8 增至 2048 时，同类探针只从约 47 ms 增至约 59 ms，
 - `currentMsec -> TGrid` 与 group 无关。`SoflanManager` 应每帧只转换一次当前 TGrid，各 group 改走已存在的 TGrid→Y 二分路径；17 BPM 的 10 万次探针从 Audio→TGrid 的约 55 ms/23.2 MB 降为共享 TGrid 后各 group TGrid→Y 的约 9.2 ms/近零分配。
 - `BpmList` 已有 BPM/TGrid 属性变更通知链，使用单调 version 或 dirty flag 替代每次全量内容 hash。
 - 在 `List<BpmTimingPoint>` 上按 `AudioTime` 和 `TGrid.TotalGrid` 手写二分。
-- 保留现有公开方法签名，可把 MonoMod 风险限制在随补丁部署的 Core DLL 内。
+- 保留现有公开方法签名，可把 MonoMod 风险限制在 patch 内嵌的 Core 实现中。
 - 为 `IsNotifying = false` 或批量编辑场景提供显式 `Invalidate/Prepare`；游戏加载完成后把 BPM snapshot 冻结是风险更低的运行时方案。
 - 如果目标是完全零分配，进一步提供基于 total-grid/scalar 的 API，避免 `GridOffset/TGrid` 对象构造。
 
@@ -353,19 +355,21 @@ Release 产物 IL 已确认：
 
 以下现象真实，但应描述为容量权衡而不是泄漏：
 
-- `registerNoteIndexToSoflanGroupMap`、起止 TGrid map、`visibleRangeListMap` 和 current group time map 的外层 Dictionary 在 `Clear()` 后保留桶容量。
-- 切谱时 `visibleRangeListMap.Clear()` 已释放每 group 的 `Ranges` 和 scratch 引用；旧评审所说内部 List 跨谱永久保留不成立。
+- 每个 `PlayerSoflanState` 的 note group/起止 TGrid map、visible-range map 和 current group time map 在同一谱面内保留桶容量。
+- 切谱时 `clearPlayer(playerId)` 会移除整份玩家状态，BPM/SFL、note map、每 group 的 `Ranges` 和 scratch 都可回收；旧评审所说内部 List 跨谱永久保留不成立。
 - 同一谱内保留 List/scratch 容量是为了降低播放期分配，GC 暂停前提下通常是合理选择。
 
 可以在切谱时按容量阈值重建外层 Dictionary，以换取释放高水位内存；不要在播放热路径频繁丢弃内部缓冲。
 
 ## 低优先级与待实机采样项
 
-### Tap 热路径中的确定死计算
+### Tap 热路径中的确定死计算（已修复）
 
-`Monitor.NoteBase.mm.cs:202` 读取的 `currentTime` 没有被使用；`Monitor.NoteBase.mm.cs:219` 开始计算的玩家速度、`offsetYAdj` 最终又乘以恒为 `0` 的 `sign`。Release IL 中这些 getter 和算术仍然存在，每个活跃 Tap/Break/Star 每帧都会执行。
-
-如果当前设计明确保持 `sign = 0`，可以删除整条死计算，视觉结果不变。若注释表示未来准备恢复 offset，则应把计算一起放回真正启用该功能的分支，而不是常驻热路径。
+原评审发现 `currentTime` 未使用，且玩家速度、`offsetYAdj` 最终乘以恒为 `0` 的
+`sign`。MaiBug-Soflan 对齐改动现已删除这条死计算：音频毫秒偏移通过
+`GetCurrentSoflanTimeWithOffsetsCached()` 在移除玩家级 `GetAdjustMSec()` 后把
+MaiBug 偏移映射进 Soflan 时间轴，`currentTime` 用于构造统一后的原始谱面时间，
+不再另外计算或叠加 `offsetYAdj`。
 
 ### 原版 scale 写入后被 Soflan scale 覆盖
 
