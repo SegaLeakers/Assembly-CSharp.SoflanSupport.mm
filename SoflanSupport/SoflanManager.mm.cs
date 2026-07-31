@@ -219,13 +219,16 @@ namespace SoflanSupport
                 {
                     if (line.StartsWith("SFL", StringComparison.InvariantCultureIgnoreCase))
                     {
-                        PatchLog.Error($"parse soflan failed, line content:{line}");
-                        break;
+                        if (!tryParseSoflan(line, out var soflan))
+                        {
+                            PatchLog.Error($"parse soflan failed, line content:{line}");
+                            break;
+                        }
+                        state.SoflanListMap.Add(soflan);
+                        state.ContainSoflans = true;
+                        PatchLog.WriteLine($"parse soflan: {soflan}");
+                        SoflanDiagnostic.SoflanLineLoaded(playerId, line);
                     }
-                    state.SoflanListMap.Add(soflan);
-                    state.ContainSoflans = true;
-                    PatchLog.WriteLine($"parse soflan: {soflan}");
-                    SoflanDiagnostic.SoflanLineLoaded(playerId, line);
                 }
             }
 
