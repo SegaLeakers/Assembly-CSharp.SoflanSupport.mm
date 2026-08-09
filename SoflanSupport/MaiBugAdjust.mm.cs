@@ -1,3 +1,5 @@
+using System;
+
 namespace SoflanSupport
 {
     /// <summary>
@@ -7,60 +9,61 @@ namespace SoflanSupport
     /// </summary>
     public static class MaiBugAdjust
     {
-        public const float BaseNoteSpeed = 150f;
-        public const float DefaultMsecNumerator = 240000f;
+        public const double BaseNoteSpeed = 150d;
+        public const double DefaultMsecNumerator = 240000d;
 
-        public static float Calculate(float noteSpeed)
+        public static TimeSpan Calculate(double noteSpeed)
         {
             if (!IsPositiveFinite(noteSpeed))
-                return 0f;
+                return TimeSpan.Zero;
 
-            float speedRatio = noteSpeed / BaseNoteSpeed;
-            return (speedRatio - 1f) * (-0.5f / speedRatio) * 1.6f * 1000f / 60f;
+            var speedRatio = noteSpeed / BaseNoteSpeed;
+            var adjustMsec = (speedRatio - 1d) * (-0.5d / speedRatio) * 1.6d * 1000d / 60d;
+            return SoflanRuntimeTime.FromMilliseconds(adjustMsec);
         }
 
-        public static float Calculate(float noteSpeed, bool enabled)
+        public static TimeSpan Calculate(double noteSpeed, bool enabled)
         {
-            return enabled ? Calculate(noteSpeed) : 0f;
+            return enabled ? Calculate(noteSpeed) : TimeSpan.Zero;
         }
 
-        public static float CalculateFromDefaultMsec(float defaultMsec)
+        public static TimeSpan CalculateFromDefaultTime(TimeSpan defaultTime)
         {
-            if (!IsPositiveFinite(defaultMsec))
-                return 0f;
+            if (defaultTime <= TimeSpan.Zero)
+                return TimeSpan.Zero;
 
-            return Calculate(DefaultMsecNumerator / defaultMsec);
+            return Calculate(DefaultMsecNumerator / defaultTime.TotalMilliseconds);
         }
 
-        public static float CalculateFromDefaultMsec(float defaultMsec, bool enabled)
+        public static TimeSpan CalculateFromDefaultTime(TimeSpan defaultTime, bool enabled)
         {
-            return enabled ? CalculateFromDefaultMsec(defaultMsec) : 0f;
+            return enabled ? CalculateFromDefaultTime(defaultTime) : TimeSpan.Zero;
         }
 
-        public static float CalculateFromVisibleMsec(float visibleMsec)
+        public static TimeSpan CalculateFromVisibleTime(TimeSpan visibleTime)
         {
-            if (!IsPositiveFinite(visibleMsec))
-                return 0f;
+            if (visibleTime <= TimeSpan.Zero)
+                return TimeSpan.Zero;
 
-            return CalculateFromDefaultMsec(visibleMsec * 0.5f);
+            return CalculateFromDefaultTime(TimeSpan.FromTicks(visibleTime.Ticks / 2));
         }
 
-        public static float CalculateFromVisibleMsec(float visibleMsec, bool enabled)
+        public static TimeSpan CalculateFromVisibleTime(TimeSpan visibleTime, bool enabled)
         {
-            return enabled ? CalculateFromVisibleMsec(visibleMsec) : 0f;
+            return enabled ? CalculateFromVisibleTime(visibleTime) : TimeSpan.Zero;
         }
 
-        public static float ApplyToAudioMsec(float audioMsec, float adjustMsec)
+        public static TimeSpan ApplyToAudioTime(TimeSpan audioTime, TimeSpan adjustment)
         {
-            float adjustedAudioMsec = audioMsec + adjustMsec;
-            // TGridCalculator 对负音频时间没有有效 BPM timing point；谱面起点前统一钳到 0，
-            // 避免开场几毫秒因负 MaiBug 偏移得到 null TGrid。
-            return adjustedAudioMsec < 0f ? 0f : adjustedAudioMsec;
+            return SoflanRuntimeTime.ToRawChartAudioTime(
+                audioTime,
+                TimeSpan.Zero,
+                adjustment);
         }
 
-        private static bool IsPositiveFinite(float value)
+        private static bool IsPositiveFinite(double value)
         {
-            return value > 0f && !float.IsNaN(value) && !float.IsInfinity(value);
+            return value > 0d && !double.IsNaN(value) && !double.IsInfinity(value);
         }
     }
 }

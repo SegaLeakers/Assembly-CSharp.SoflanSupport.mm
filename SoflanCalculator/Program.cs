@@ -4,6 +4,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using SoflanSupport;
 
 namespace SoflanCalculator
 {
@@ -262,12 +263,12 @@ namespace SoflanCalculator
                 r = SoflanCalcEngine.Calculate(
                     data,
                     note,
-                    currentMsec,
+                    SoflanRuntimeTime.FromGameMsecBoundary(currentMsec),
                     s_noteSpeedValue,
                     StartPos,
                     EndPos,
                     true,
-                    s_runtimeChartOffsetMsec);
+                    SoflanRuntimeTime.FromGameMsecBoundary(s_runtimeChartOffsetMsec));
             }
             catch (Exception ex)
             {
@@ -290,30 +291,30 @@ namespace SoflanCalculator
             Console.WriteLine("--- Parameters ---");
             Console.WriteLine($"NoteSpeedValue:   {r.NoteSpeedValue:F1}  (Speed {SpeedLabel(r.NoteSpeedValue)})");
             Console.WriteLine($"speedRatio:       {r.SpeedRatio:F3}");
-            Console.WriteLine($"DefaultMsec:      {r.DefaultMsec:F3}");
+            Console.WriteLine($"DefaultTime:      {r.DefaultTime.TotalMilliseconds:F3}ms");
             Console.WriteLine($"MaiBugEnabled:    {r.MaiBugAdjustEnabled}");
-            Console.WriteLine($"MaiBugAdjustMSec: {r.MaiBugAdjustMSec:F3}");
+            Console.WriteLine($"MaiBugAdjust:     {r.MaiBugAdjust.TotalMilliseconds:F3}ms");
             Console.WriteLine($"StartPos:         {r.StartPos:F3}");
             Console.WriteLine($"EndPos:            {r.EndPos:F3}");
             Console.WriteLine();
 
             Console.WriteLine("--- Note Timing ---");
-            Console.WriteLine($"AppearMsec:        {r.AppearMsec:F3}");
-            Console.WriteLine($"noteSoflanTime:    {r.NoteSoflanTime:F3}");
-            Console.WriteLine($"currentMsec:       {r.CurrentMsec:F3}");
-            Console.WriteLine($"runtimeOffset:     {r.RuntimeChartOffsetMsec:F3}");
-            Console.WriteLine($"rawChartMsec:      {r.RawChartCurrentMsec:F3}");
-            Console.WriteLine($"maiBugCurrentMsec: {r.MaiBugAdjustedCurrentMsec:F3}");
-            Console.WriteLine($"rawSoflanTime:     {r.RawCurrentSoflanTime:F3}");
-            Console.WriteLine($"currentSoflanTime: {r.CurrentSoflanTime:F3} (MaiBug adjusted)");
+            Console.WriteLine($"AppearMsec:        {r.AppearTime.TotalMilliseconds:F3}");
+            Console.WriteLine($"noteSoflanPosition:{r.NoteSoflanPosition.Value,10:F3}");
+            Console.WriteLine($"currentMsec:       {r.CurrentTime.TotalMilliseconds:F3}");
+            Console.WriteLine($"runtimeOffset:     {r.RuntimeChartOffset.TotalMilliseconds:F3}");
+            Console.WriteLine($"rawChartMsec:      {r.RawChartCurrentTime.TotalMilliseconds:F3}");
+            Console.WriteLine($"maiBugCurrentMsec: {r.MaiBugAdjustedCurrentTime.TotalMilliseconds:F3}");
+            Console.WriteLine($"rawSoflanPosition: {r.RawCurrentSoflanPosition.Value:F3}");
+            Console.WriteLine($"currentSoflanPos:  {r.CurrentSoflanPosition.Value:F3} (MaiBug adjusted)");
             Console.WriteLine($"currentSoflanSpeed: {r.CurrentSoflanSpeed:F3}x  (group {r.SoflanGroup})");
             Console.WriteLine();
 
             Console.WriteLine("--- Computed Values ---");
-            Console.WriteLine($"diffTime:          {r.DiffTime:F3}");
-            Console.WriteLine($"absDiffTime:       {r.AbsDiffTime:F3}");
-            Console.WriteLine($"scaleStartTime:    {r.ScaleStartTime:F3}");
-            Console.WriteLine($"moveStartTime:     {r.MoveStartTime:F3}");
+            Console.WriteLine($"diffPosition:      {r.DiffPosition:F3}");
+            Console.WriteLine($"absDiffPosition:   {r.AbsDiffPosition:F3}");
+            Console.WriteLine($"scaleStartDistance:{r.ScaleStartDistance,10:F3}");
+            Console.WriteLine($"moveStartDistance: {r.MoveStartDistance:F3}");
             Console.WriteLine($"NoteStat:          {r.NoteStat}");
             Console.WriteLine($"moveProgress:      {r.MoveProgress:F3}");
             Console.WriteLine($"finalScale:        {r.FinalScale:F3}");

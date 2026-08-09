@@ -23,41 +23,48 @@ namespace SoflanSupport
             public SoflanListMap SoflanListMap = new();
             public BpmList BpmList = new BpmList();
             public bool ContainSoflans;
-            public float RuntimeChartOffsetMsec;
+            public TimeSpan RuntimeChartOffset;
             public readonly Dictionary<int, int> NoteIndexToSoflanGroupMap = new();
             public readonly Dictionary<int, TGrid> NoteIndexToSoflanTGridMap = new();
             public readonly Dictionary<int, TGrid> NoteIndexToSoflanEndTGridMap = new();
 
-            public float CachedCalculatedCurrentMsec = float.MinValue;
-            public float CachedCalculatedApperMsec = float.MinValue;
+            public TimeSpan CachedCalculatedCurrentTime;
+            public TimeSpan CachedCalculatedAppearTime;
+            public bool HasCalculatedVisibleFrame;
             public int VisibleRangeCacheVersion;
-            public readonly Dictionary<int, VisibleMsecRangeCache> VisibleRangeListMap = new();
-            public float CachedCurrentSoflanTimeMsec = float.MinValue;
-            public readonly Dictionary<CurrentSoflanTimeCacheKey, float> CachedCurrentSoflanTimeMap = new();
+            public readonly Dictionary<int, VisibleTotalGridRangeCache> VisibleRangeListMap = new();
+            public readonly Dictionary<int, FallbackVisibleTimeRangeCache> FallbackVisibleRangeListMap = new();
+            public long VisibilityFallbackCount;
+            public TimeSpan CachedRuntimeCurrentTime;
+            public bool HasCachedRuntimeCurrentTime;
+            public readonly Dictionary<CurrentSoflanPositionCacheKey, SoflanPosition> CachedCurrentSoflanPositionMap = new();
 
             public PlayerSoflanState(int playerId)
             {
                 PlayerId = playerId;
             }
 
-            public void ResetComposition(float runtimeChartOffsetMsec)
+            public void ResetComposition(TimeSpan runtimeChartOffset)
             {
                 SoflanListMap = new SoflanListMap();
                 BpmList = new BpmList();
                 ContainSoflans = false;
-                RuntimeChartOffsetMsec = SoflanRuntimeTime.NormalizeRuntimeChartOffsetMsec(
-                    runtimeChartOffsetMsec);
+                RuntimeChartOffset = runtimeChartOffset;
                 ResetCaches();
             }
 
             public void ResetCaches()
             {
-                CachedCalculatedCurrentMsec = float.MinValue;
-                CachedCalculatedApperMsec = float.MinValue;
+                CachedCalculatedCurrentTime = default;
+                CachedCalculatedAppearTime = default;
+                HasCalculatedVisibleFrame = false;
                 VisibleRangeCacheVersion = 0;
                 VisibleRangeListMap.Clear();
-                CachedCurrentSoflanTimeMsec = float.MinValue;
-                CachedCurrentSoflanTimeMap.Clear();
+                FallbackVisibleRangeListMap.Clear();
+                VisibilityFallbackCount = 0;
+                CachedRuntimeCurrentTime = default;
+                HasCachedRuntimeCurrentTime = false;
+                CachedCurrentSoflanPositionMap.Clear();
             }
         }
 
@@ -100,11 +107,18 @@ namespace SoflanSupport
 
             var state = GetOrCreatePlayerState(playerId);
 
+            // A chart reload can reuse a player state. Remove old index entries before
+            // attempting to decode this note so a failed/missing decode cannot reuse a
+            // TGrid or group from a previous chart.
+            state.NoteIndexToSoflanGroupMap.Remove(noteData.indexNote);
+            state.NoteIndexToSoflanTGridMap.Remove(noteData.indexNote);
+            state.NoteIndexToSoflanEndTGridMap.Remove(noteData.indexNote);
+
             var fixedNoteData = (patch_NoteData)noteData;
             fixedNoteData.isFixedSoflanToUnifiedSpeed = false;
             fixedNoteData.fixedSoflanUnifiedSpeed = FixedSoflan.DefaultUnifiedSpeed;
 
-            if (TryReadRecordTGrid(record, out var noteTGrid) || TryReadNotesTimeTGrid(noteData.time, sr, out noteTGrid))
+            if (TryReadNotesTimeTGrid(noteData.time, sr, out var noteTGrid))
                 state.NoteIndexToSoflanTGridMap[noteData.indexNote] = noteTGrid;
             if (HasMeaningfulEndTime(noteData) && TryReadNotesTimeTGrid(noteData.end, sr, out var noteEndTGrid))
                 state.NoteIndexToSoflanEndTGridMap[noteData.indexNote] = noteEndTGrid;
@@ -147,22 +161,6 @@ namespace SoflanSupport
                 marker.Marker);
         }
 
-        private static bool TryReadRecordTGrid(MA2Record record, out TGrid tGrid)
-        {
-            tGrid = default;
-            if (record?._str == null || record._str.Count < 3)
-                return false;
-
-            if (!int.TryParse(record._str[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var grid))
-                return false;
-
-            if (!int.TryParse(record._str[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var unit))
-                return false;
-
-            tGrid = new TGrid(grid, unit);
-            return true;
-        }
-
         private static bool TryReadNotesTimeTGrid(NotesTime notesTime, NotesReader sr, out TGrid tGrid)
         {
             tGrid = default;
@@ -196,35 +194,37 @@ namespace SoflanSupport
             MA2RecordList records,
             NotesReader sr,
             int playerId,
-            float runtimeChartOffsetMsec)
+            TimeSpan runtimeChartOffset)
         {
             var state = GetOrCreatePlayerState(playerId);
-            state.ResetComposition(runtimeChartOffsetMsec);
+            state.ResetComposition(runtimeChartOffset);
 
             var filePath = sr.GetHeader()._notesName;
-            if (!File.Exists(filePath))
+            if (!TryOpenCompositionReader(filePath, out var reader))
             {
                 SoflanDiagnostic.CompositionLoaded(
                     playerId,
                     filePath,
                     false,
-                    state.RuntimeChartOffsetMsec);
+                    state.RuntimeChartOffset);
                 return;
             }
 
-            foreach (var line in File.ReadLines(filePath))
+            using (reader)
             {
-                if (line.StartsWith("SFL", StringComparison.InvariantCultureIgnoreCase))
-                {
-                    if (!tryParseSoflan(line, out var soflan))
+                var loadResult = SoflanCompositionParser.Load(
+                    reader,
+                    state.SoflanListMap,
+                    (line, soflan) =>
                     {
-                        PatchLog.Error($"parse soflan failed, line content:{line}");
-                        break;
-                    }
-                    state.SoflanListMap.Add(soflan);
-                    state.ContainSoflans = true;
-                    PatchLog.WriteLine($"parse soflan: {soflan}");
-                    SoflanDiagnostic.SoflanLineLoaded(playerId, line);
+                        PatchLog.WriteLine($"parse soflan: {soflan}");
+                        SoflanDiagnostic.SoflanLineLoaded(playerId, line);
+                    });
+                state.ContainSoflans = loadResult.ParsedCount > 0;
+                if (!loadResult.Success)
+                {
+                    PatchLog.Error(
+                        $"parse soflan failed, line content:{loadResult.FailedLine}");
                 }
             }
 
@@ -249,7 +249,7 @@ namespace SoflanSupport
 
             PatchLog.WriteLine($"-------DUMP SOFLAN TIMING POINTS-------");
             PatchLog.WriteLine($"PlayerId: {playerId}");
-            PatchLog.WriteLine($"RuntimeChartOffsetMsec: {state.RuntimeChartOffsetMsec.ToString(CultureInfo.InvariantCulture)}");
+            PatchLog.WriteLine($"RuntimeChartOffset: {state.RuntimeChartOffset.TotalMilliseconds.ToString(CultureInfo.InvariantCulture)}ms");
             PatchLog.WriteLine($"FilePath: {sr.GetHeader()._notesName}");
             foreach (KeyValuePair<int, SoflanList> pair in state.SoflanListMap)
             {
@@ -267,50 +267,19 @@ namespace SoflanSupport
                 playerId,
                 filePath,
                 state.ContainSoflans,
-                state.RuntimeChartOffsetMsec);
+                state.RuntimeChartOffset);
         }
 
-        private bool tryParseSoflan(string line, out ISoflan soflan)
+        private static bool TryOpenCompositionReader(string filePath, out TextReader reader)
         {
-            try
+            if (File.Exists(filePath))
             {
-                soflan = new Soflan()
-                {
-                    TGrid = new TGrid(int.Parse(GetTabField(line, 1)), int.Parse(GetTabField(line, 2))),
-                    Speed = float.Parse(GetTabField(line, 4)),
-                    SoflanGroup = 0
-                };
-                soflan.EndTGrid = soflan.TGrid + new GridOffset(0, int.Parse(GetTabField(line, 3)));
-                var soflanGroup = GetTabField(line, 5);
-                if (!string.IsNullOrWhiteSpace(soflanGroup))
-                    soflan.SoflanGroup = int.Parse(soflanGroup);
+                reader = File.OpenText(filePath);
                 return true;
             }
-            catch
-            {
-                //todo log ex
-                soflan = default;
-                return false;
-            }
-        }
 
-        private static string GetTabField(string line, int fieldIndex)
-        {
-            var start = 0;
-            var currentIndex = 0;
-            for (var i = 0; i <= line.Length; i++)
-            {
-                if (i < line.Length && line[i] != '\t')
-                    continue;
-
-                if (currentIndex == fieldIndex)
-                    return line.Substring(start, i - start).Trim();
-
-                start = i + 1;
-                currentIndex++;
-            }
-
-            return null;
+            reader = null;
+            return false;
         }
 
         public bool containsSoflans(int playerId)
@@ -318,11 +287,11 @@ namespace SoflanSupport
             return TryGetPlayerState(playerId, out var state) && state.ContainSoflans;
         }
 
-        public float getRuntimeChartOffsetMsec(int playerId)
+        public TimeSpan getRuntimeChartOffset(int playerId)
         {
             return TryGetPlayerState(playerId, out var state)
-                ? state.RuntimeChartOffsetMsec
-                : 0f;
+                ? state.RuntimeChartOffset
+                : TimeSpan.Zero;
         }
 
         public static bool IsSupportedVisualSoflanKind(NotesTypeID.Def noteKind)
@@ -355,45 +324,54 @@ namespace SoflanSupport
 
         //-------------------------------------------
 
-        private sealed class VisibleMsecRangeCache
+        private sealed class VisibleTotalGridRangeCache
         {
             public int Version;
-            public float CurrentSoflanTime = float.MinValue;
-            public float ApperMsec = float.MinValue;
-            public readonly List<SoflanList.VisibleMsecRange> Ranges = new List<SoflanList.VisibleMsecRange>();
+            public SoflanPosition CurrentSoflanPosition;
+            public TimeSpan AppearTime;
+            public readonly List<SoflanList.VisibleTotalGridRange> Ranges = new List<SoflanList.VisibleTotalGridRange>();
             public readonly SoflanList.VisibleRangeQueryScratch VisibleRangeScratch = new SoflanList.VisibleRangeQueryScratch();
         }
 
-        private struct CurrentSoflanTimeCacheKey : IEquatable<CurrentSoflanTimeCacheKey>
+        private sealed class FallbackVisibleTimeRangeCache
+        {
+            public int Version;
+            public SoflanPosition CurrentSoflanPosition;
+            public TimeSpan AppearTime;
+            public readonly List<SoflanList.VisibleTimeSpanRange> Ranges = new List<SoflanList.VisibleTimeSpanRange>();
+            public readonly SoflanList.VisibleRangeQueryScratch VisibleRangeScratch = new SoflanList.VisibleRangeQueryScratch();
+        }
+
+        private struct CurrentSoflanPositionCacheKey : IEquatable<CurrentSoflanPositionCacheKey>
         {
             public readonly int PlayerId;
             public readonly int Group;
-            public readonly float RuntimeChartOffsetMsec;
-            public readonly float VisualAudioOffsetMsec;
+            public readonly TimeSpan RuntimeChartOffset;
+            public readonly TimeSpan VisualAudioOffset;
 
-            public CurrentSoflanTimeCacheKey(
+            public CurrentSoflanPositionCacheKey(
                 int playerId,
                 int group,
-                float runtimeChartOffsetMsec,
-                float visualAudioOffsetMsec)
+                TimeSpan runtimeChartOffset,
+                TimeSpan visualAudioOffset)
             {
                 PlayerId = playerId;
                 Group = group;
-                RuntimeChartOffsetMsec = runtimeChartOffsetMsec;
-                VisualAudioOffsetMsec = visualAudioOffsetMsec;
+                RuntimeChartOffset = runtimeChartOffset;
+                VisualAudioOffset = visualAudioOffset;
             }
 
-            public bool Equals(CurrentSoflanTimeCacheKey other)
+            public bool Equals(CurrentSoflanPositionCacheKey other)
             {
                 return PlayerId == other.PlayerId
                     && Group == other.Group
-                    && RuntimeChartOffsetMsec.Equals(other.RuntimeChartOffsetMsec)
-                    && VisualAudioOffsetMsec.Equals(other.VisualAudioOffsetMsec);
+                    && RuntimeChartOffset.Equals(other.RuntimeChartOffset)
+                    && VisualAudioOffset.Equals(other.VisualAudioOffset);
             }
 
             public override bool Equals(object obj)
             {
-                return obj is CurrentSoflanTimeCacheKey other && Equals(other);
+                return obj is CurrentSoflanPositionCacheKey other && Equals(other);
             }
 
             public override int GetHashCode()
@@ -402,52 +380,138 @@ namespace SoflanSupport
                 {
                     var hashCode = PlayerId;
                     hashCode = (hashCode * 397) ^ Group;
-                    hashCode = (hashCode * 397) ^ RuntimeChartOffsetMsec.GetHashCode();
-                    hashCode = (hashCode * 397) ^ VisualAudioOffsetMsec.GetHashCode();
+                    hashCode = (hashCode * 397) ^ RuntimeChartOffset.GetHashCode();
+                    hashCode = (hashCode * 397) ^ VisualAudioOffset.GetHashCode();
                     return hashCode;
                 }
             }
         }
 
-        public bool checkNoteVisible(int playerId, NoteData noteData, float currentMsec, float apperMsec)
+        public bool checkNoteVisible(
+            int playerId,
+            NoteData noteData,
+            TimeSpan currentTime,
+            TimeSpan appearTime)
         {
             if (noteData == null)
                 return false;
 
             var soflanGroup = getNoteSoflanGroup(playerId, noteData);
-            var maiBugAdjustMsec = SoflanVisualTiming.GetMaiBugAdjustMsec(
+            var maiBugAdjust = SoflanVisualTiming.GetMaiBugAdjust(
                 noteData.type.getEnum(),
-                apperMsec);
-            var currentSoflanTime = GetCurrentSoflanTimeWithOffsetsCached(
+                appearTime);
+            var currentSoflanPosition = GetCurrentSoflanPositionWithOffsetsCached(
                 playerId,
-                currentMsec,
-                maiBugAdjustMsec,
+                currentTime,
+                maiBugAdjust,
                 soflanGroup);
-            return checkNoteVisible(playerId, noteData, currentMsec, apperMsec, soflanGroup, currentSoflanTime);
+            return checkNoteVisible(
+                playerId,
+                noteData,
+                currentTime,
+                appearTime,
+                soflanGroup,
+                currentSoflanPosition);
         }
 
         public bool checkNoteVisible(
             int playerId,
             NoteData noteData,
-            float currentMsec,
-            float apperMsec,
+            TimeSpan currentTime,
+            TimeSpan appearTime,
             int soflanGroup,
-            float currentSoflanTime)
+            SoflanPosition currentSoflanPosition)
         {
-            if (!TryGetPlayerState(playerId, out var state))
+            if (noteData == null || !TryGetPlayerState(playerId, out var state))
                 return false;
 
-            BeginVisibleRangeFrame(state, currentMsec, apperMsec);
+            BeginVisibleRangeFrame(state, currentTime, appearTime);
 
-            var visibleRangeList = GetVisibleRangeList(state, soflanGroup, currentSoflanTime, apperMsec);
+            var visibleRangeList = GetVisibleTotalGridRangeList(
+                state,
+                soflanGroup,
+                currentSoflanPosition,
+                appearTime);
             if (visibleRangeList == null)
                 return false;
 
-            // foreach 替代 LINQ Any, 避免每帧闭包/委托/迭代器分配 (热路径零分配).
-            var msec = getNoteAudioMsecForSoflan(playerId, noteData);
-            foreach (var range in visibleRangeList)
+            if (TryGetNoteTotalGrid(state, noteData.indexNote, out var noteTotalGrid, out var fallbackReason))
             {
-                if (range.Contain(msec))
+                // foreach avoids LINQ delegate/iterator allocations in the per-note hot path.
+                foreach (var range in visibleRangeList)
+                {
+                    if (range.Contain(noteTotalGrid))
+                        return true;
+                }
+                return false;
+            }
+
+            return CheckNoteVisibleByAudioTimeFallback(
+                state,
+                noteData,
+                currentTime,
+                appearTime,
+                soflanGroup,
+                currentSoflanPosition,
+                fallbackReason);
+        }
+
+        private static bool TryGetNoteTotalGrid(
+            PlayerSoflanState state,
+            int noteIndex,
+            out int totalGrid,
+            out string fallbackReason)
+        {
+            totalGrid = 0;
+            if (!state.NoteIndexToSoflanTGridMap.TryGetValue(noteIndex, out var tGrid)
+                || tGrid == null)
+            {
+                fallbackReason = "missing_tgrid";
+                return false;
+            }
+
+            try
+            {
+                totalGrid = tGrid.TotalGrid;
+                fallbackReason = null;
+                return true;
+            }
+            catch
+            {
+                fallbackReason = "invalid_tgrid";
+                return false;
+            }
+        }
+
+        private bool CheckNoteVisibleByAudioTimeFallback(
+            PlayerSoflanState state,
+            NoteData noteData,
+            TimeSpan currentTime,
+            TimeSpan appearTime,
+            int soflanGroup,
+            SoflanPosition currentSoflanPosition,
+            string reason)
+        {
+            if (state.VisibilityFallbackCount < long.MaxValue)
+                state.VisibilityFallbackCount++;
+
+            SoflanDiagnostic.VisibilityTGridFallback(
+                state.PlayerId,
+                noteData,
+                currentTime,
+                appearTime,
+                state.VisibilityFallbackCount,
+                reason);
+
+            var fallbackRanges = GetFallbackVisibleTimeRangeList(
+                state,
+                soflanGroup,
+                currentSoflanPosition,
+                appearTime);
+            var noteTime = GetNoteAudioTimeForSoflan(state.PlayerId, noteData);
+            foreach (var range in fallbackRanges)
+            {
+                if (range.Contain(noteTime))
                     return true;
             }
             return false;
@@ -466,81 +530,96 @@ namespace SoflanSupport
             return noteData == null ? 0 : getNoteSoflanGroup(playerId, noteData.indexNote);
         }
 
-        public float getNoteAudioMsecForSoflan(int playerId, NoteData noteData)
+        public TimeSpan GetNoteAudioTimeForSoflan(int playerId, NoteData noteData)
         {
             return noteData == null
-                ? 0f
-                : getNoteAudioMsecForSoflan(playerId, noteData.indexNote, noteData.time.msec);
+                ? TimeSpan.Zero
+                : GetNoteAudioTimeForSoflan(
+                    playerId,
+                    noteData.indexNote,
+                    SoflanRuntimeTime.FromGameMsecBoundary(noteData.time.msec));
         }
 
-        public float getNoteAudioMsecForSoflan(int playerId, int noteIndex, float fallbackMsec)
+        public TimeSpan GetNoteAudioTimeForSoflan(
+            int playerId,
+            int noteIndex,
+            TimeSpan fallbackRuntimeTime)
         {
             if (!TryGetPlayerState(playerId, out var state))
-                return fallbackMsec;
+                return fallbackRuntimeTime;
             if (!state.NoteIndexToSoflanTGridMap.TryGetValue(noteIndex, out var tGrid))
-                return SoflanRuntimeTime.ToRawChartAudioMsec(
-                    fallbackMsec,
-                    state.RuntimeChartOffsetMsec,
-                    0f);
+                return SoflanRuntimeTime.ToRawChartAudioTime(
+                    fallbackRuntimeTime,
+                    state.RuntimeChartOffset,
+                    TimeSpan.Zero);
 
             try
             {
-                return (float)TGridCalculator.ConvertTGridToAudioTime(tGrid, state.BpmList).TotalMilliseconds;
+                return TGridCalculator.ConvertTGridToAudioTime(tGrid, state.BpmList);
             }
             catch
             {
-                return SoflanRuntimeTime.ToRawChartAudioMsec(
-                    fallbackMsec,
-                    state.RuntimeChartOffsetMsec,
-                    0f);
+                return SoflanRuntimeTime.ToRawChartAudioTime(
+                    fallbackRuntimeTime,
+                    state.RuntimeChartOffset,
+                    TimeSpan.Zero);
             }
         }
 
-        public float getNoteEndAudioMsecForSoflan(int playerId, NoteData noteData)
+        public TimeSpan GetNoteEndAudioTimeForSoflan(int playerId, NoteData noteData)
         {
             return noteData == null
-                ? 0f
-                : getNoteEndAudioMsecForSoflan(playerId, noteData.indexNote, noteData.end.msec);
+                ? TimeSpan.Zero
+                : GetNoteEndAudioTimeForSoflan(
+                    playerId,
+                    noteData.indexNote,
+                    SoflanRuntimeTime.FromGameMsecBoundary(noteData.end.msec));
         }
 
-        public float getNoteEndAudioMsecForSoflan(int playerId, int noteIndex, float fallbackMsec)
+        public TimeSpan GetNoteEndAudioTimeForSoflan(
+            int playerId,
+            int noteIndex,
+            TimeSpan fallbackRuntimeTime)
         {
             if (!TryGetPlayerState(playerId, out var state))
-                return fallbackMsec;
+                return fallbackRuntimeTime;
             if (!state.NoteIndexToSoflanEndTGridMap.TryGetValue(noteIndex, out var tGrid))
-                return SoflanRuntimeTime.ToRawChartAudioMsec(
-                    fallbackMsec,
-                    state.RuntimeChartOffsetMsec,
-                    0f);
+                return SoflanRuntimeTime.ToRawChartAudioTime(
+                    fallbackRuntimeTime,
+                    state.RuntimeChartOffset,
+                    TimeSpan.Zero);
 
             try
             {
-                return (float)TGridCalculator.ConvertTGridToAudioTime(tGrid, state.BpmList).TotalMilliseconds;
+                return TGridCalculator.ConvertTGridToAudioTime(tGrid, state.BpmList);
             }
             catch
             {
-                return SoflanRuntimeTime.ToRawChartAudioMsec(
-                    fallbackMsec,
-                    state.RuntimeChartOffsetMsec,
-                    0f);
+                return SoflanRuntimeTime.ToRawChartAudioTime(
+                    fallbackRuntimeTime,
+                    state.RuntimeChartOffset,
+                    TimeSpan.Zero);
             }
         }
 
         private static void BeginVisibleRangeFrame(
             PlayerSoflanState state,
-            float currentMsec,
-            float apperMsec)
+            TimeSpan currentTime,
+            TimeSpan appearTime)
         {
-            if (state.CachedCalculatedCurrentMsec == currentMsec
-                && state.CachedCalculatedApperMsec == apperMsec)
+            if (state.HasCalculatedVisibleFrame
+                && state.CachedCalculatedCurrentTime == currentTime
+                && state.CachedCalculatedAppearTime == appearTime)
                 return;
 
-            state.CachedCalculatedCurrentMsec = currentMsec;
-            state.CachedCalculatedApperMsec = apperMsec;
+            state.CachedCalculatedCurrentTime = currentTime;
+            state.CachedCalculatedAppearTime = appearTime;
+            state.HasCalculatedVisibleFrame = true;
 
             if (state.VisibleRangeCacheVersion == int.MaxValue)
             {
                 state.VisibleRangeListMap.Clear();
+                state.FallbackVisibleRangeListMap.Clear();
                 state.VisibleRangeCacheVersion = 1;
             }
             else
@@ -549,105 +628,223 @@ namespace SoflanSupport
             }
         }
 
-        private List<SoflanList.VisibleMsecRange> GetVisibleRangeList(
+        private List<SoflanList.VisibleTotalGridRange> GetVisibleTotalGridRangeList(
             PlayerSoflanState state,
             int soflanGroup,
-            float currentSoflanTime,
-            float apperMsec)
+            SoflanPosition currentSoflanPosition,
+            TimeSpan appearTime)
         {
             if (!state.VisibleRangeListMap.TryGetValue(soflanGroup, out var cache))
             {
-                cache = new VisibleMsecRangeCache();
+                cache = new VisibleTotalGridRangeCache();
                 state.VisibleRangeListMap[soflanGroup] = cache;
             }
 
             if (cache.Version == state.VisibleRangeCacheVersion
-                && cache.CurrentSoflanTime == currentSoflanTime
-                && cache.ApperMsec == apperMsec)
+                && cache.CurrentSoflanPosition == currentSoflanPosition
+                && cache.AppearTime == appearTime)
                 return cache.Ranges;
 
             cache.Ranges.Clear();
 
             // Lazy per-group rebuild: only groups touched by notes in this frame are recalculated.
             var soflanList = state.SoflanListMap[soflanGroup];
-            soflanList.FillVisibleMsecRangesForGamePreview(
-                currentSoflanTime,
-                apperMsec,
+            soflanList.FillVisibleTotalGridRangesForGamePreview(
+                currentSoflanPosition.Value,
+                appearTime.TotalMilliseconds,
                 state.BpmList,
                 cache.Ranges,
                 cache.VisibleRangeScratch);
 
             cache.Version = state.VisibleRangeCacheVersion;
-            cache.CurrentSoflanTime = currentSoflanTime;
-            cache.ApperMsec = apperMsec;
+            cache.CurrentSoflanPosition = currentSoflanPosition;
+            cache.AppearTime = appearTime;
             return cache.Ranges;
         }
 
-        public float ConvertAudioTimeToY_PreviewMode(int playerId, float msec, int soflanGroup)
+        private List<SoflanList.VisibleTimeSpanRange> GetFallbackVisibleTimeRangeList(
+            PlayerSoflanState state,
+            int soflanGroup,
+            SoflanPosition currentSoflanPosition,
+            TimeSpan appearTime)
         {
-            var state = GetOrCreatePlayerState(playerId);
-            return (float)TGridCalculator.ConvertAudioTimeToY_PreviewMode(
-                TimeSpan.FromMilliseconds(msec),
-                state.SoflanListMap[soflanGroup],
+            if (!state.FallbackVisibleRangeListMap.TryGetValue(soflanGroup, out var cache))
+            {
+                cache = new FallbackVisibleTimeRangeCache();
+                state.FallbackVisibleRangeListMap[soflanGroup] = cache;
+            }
+
+            if (cache.Version == state.VisibleRangeCacheVersion
+                && cache.CurrentSoflanPosition == currentSoflanPosition
+                && cache.AppearTime == appearTime)
+                return cache.Ranges;
+
+            var soflanList = state.SoflanListMap[soflanGroup];
+            soflanList.FillVisibleTimeSpanRangesForGamePreview(
+                currentSoflanPosition.Value,
+                appearTime.TotalMilliseconds,
                 state.BpmList,
-                1);
+                cache.Ranges,
+                cache.VisibleRangeScratch);
+
+            cache.Version = state.VisibleRangeCacheVersion;
+            cache.CurrentSoflanPosition = currentSoflanPosition;
+            cache.AppearTime = appearTime;
+            return cache.Ranges;
         }
 
-        public void clearCurrentSoflanTimeCache()
+        public long GetVisibilityFallbackCount(int playerId)
+        {
+            return TryGetPlayerState(playerId, out var state)
+                ? state.VisibilityFallbackCount
+                : 0;
+        }
+
+        public SoflanPosition ConvertAudioTimeToSoflanPosition(
+            int playerId,
+            TimeSpan audioTime,
+            int soflanGroup)
+        {
+            var state = GetOrCreatePlayerState(playerId);
+            return new SoflanPosition(TGridCalculator.ConvertAudioTimeToY_PreviewMode(
+                audioTime,
+                state.SoflanListMap[soflanGroup],
+                state.BpmList,
+                1));
+        }
+
+        public SoflanPosition GetNoteSoflanPosition(
+            int playerId,
+            int noteIndex,
+            TimeSpan fallbackRuntimeTime,
+            int soflanGroup)
+        {
+            if (!TryGetPlayerState(playerId, out var state))
+                return new SoflanPosition(fallbackRuntimeTime.TotalMilliseconds);
+
+            if (state.NoteIndexToSoflanTGridMap.TryGetValue(noteIndex, out var tGrid))
+            {
+                try
+                {
+                    return new SoflanPosition(TGridCalculator.ConvertTGridToY_PreviewMode(
+                        tGrid,
+                        state.SoflanListMap[soflanGroup],
+                        state.BpmList,
+                        1));
+                }
+                catch
+                {
+                    // Fall through to the runtime-time path when a chart cache is incomplete.
+                }
+            }
+
+            return ConvertAudioTimeToSoflanPosition(
+                playerId,
+                SoflanRuntimeTime.ToRawChartAudioTime(
+                    fallbackRuntimeTime,
+                    state.RuntimeChartOffset,
+                    TimeSpan.Zero),
+                soflanGroup);
+        }
+
+        public SoflanPosition GetNoteEndSoflanPosition(
+            int playerId,
+            int noteIndex,
+            TimeSpan fallbackRuntimeTime,
+            int soflanGroup)
+        {
+            if (!TryGetPlayerState(playerId, out var state))
+                return new SoflanPosition(fallbackRuntimeTime.TotalMilliseconds);
+
+            if (state.NoteIndexToSoflanEndTGridMap.TryGetValue(noteIndex, out var tGrid))
+            {
+                try
+                {
+                    return new SoflanPosition(TGridCalculator.ConvertTGridToY_PreviewMode(
+                        tGrid,
+                        state.SoflanListMap[soflanGroup],
+                        state.BpmList,
+                        1));
+                }
+                catch
+                {
+                    // Fall through to the runtime-time path when a chart cache is incomplete.
+                }
+            }
+
+            return ConvertAudioTimeToSoflanPosition(
+                playerId,
+                SoflanRuntimeTime.ToRawChartAudioTime(
+                    fallbackRuntimeTime,
+                    state.RuntimeChartOffset,
+                    TimeSpan.Zero),
+                soflanGroup);
+        }
+
+        public void clearCurrentSoflanPositionCache()
         {
             foreach (var state in playerStateMap.Values)
             {
-                state.CachedCurrentSoflanTimeMsec = float.MinValue;
-                state.CachedCurrentSoflanTimeMap.Clear();
+                state.HasCachedRuntimeCurrentTime = false;
+                state.CachedCurrentSoflanPositionMap.Clear();
             }
         }
 
-        public void clearCurrentSoflanTimeCache(int playerId)
+        public void clearCurrentSoflanPositionCache(int playerId)
         {
             if (!TryGetPlayerState(playerId, out var state))
                 return;
 
-            state.CachedCurrentSoflanTimeMsec = float.MinValue;
-            state.CachedCurrentSoflanTimeMap.Clear();
+            state.HasCachedRuntimeCurrentTime = false;
+            state.CachedCurrentSoflanPositionMap.Clear();
         }
 
-        public float GetCurrentSoflanTimeCached(int playerId, float currentMsec, int soflanGroup)
-        {
-            return GetCurrentSoflanTimeWithOffsetsCached(playerId, currentMsec, 0f, soflanGroup);
-        }
-
-        public float GetCurrentSoflanTimeWithOffsetsCached(
+        public SoflanPosition GetCurrentSoflanPositionCached(
             int playerId,
-            float runtimeCurrentMsec,
-            float visualAudioOffsetMsec,
+            TimeSpan currentTime,
+            int soflanGroup)
+        {
+            return GetCurrentSoflanPositionWithOffsetsCached(
+                playerId,
+                currentTime,
+                TimeSpan.Zero,
+                soflanGroup);
+        }
+
+        public SoflanPosition GetCurrentSoflanPositionWithOffsetsCached(
+            int playerId,
+            TimeSpan runtimeCurrentTime,
+            TimeSpan visualAudioOffset,
             int soflanGroup)
         {
             var state = GetOrCreatePlayerState(playerId);
-            if (state.CachedCurrentSoflanTimeMsec != runtimeCurrentMsec)
+            if (!state.HasCachedRuntimeCurrentTime
+                || state.CachedRuntimeCurrentTime != runtimeCurrentTime)
             {
-                state.CachedCurrentSoflanTimeMsec = runtimeCurrentMsec;
-                state.CachedCurrentSoflanTimeMap.Clear();
+                state.CachedRuntimeCurrentTime = runtimeCurrentTime;
+                state.HasCachedRuntimeCurrentTime = true;
+                state.CachedCurrentSoflanPositionMap.Clear();
             }
 
-            var key = new CurrentSoflanTimeCacheKey(
+            var key = new CurrentSoflanPositionCacheKey(
                 playerId,
                 soflanGroup,
-                state.RuntimeChartOffsetMsec,
-                visualAudioOffsetMsec);
-            if (!state.CachedCurrentSoflanTimeMap.TryGetValue(key, out var soflanTime))
+                state.RuntimeChartOffset,
+                visualAudioOffset);
+            if (!state.CachedCurrentSoflanPositionMap.TryGetValue(key, out var soflanPosition))
             {
-                var rawChartAudioMsec = SoflanRuntimeTime.ToRawChartAudioMsec(
-                    runtimeCurrentMsec,
-                    state.RuntimeChartOffsetMsec,
-                    visualAudioOffsetMsec);
-                soflanTime = ConvertAudioTimeToY_PreviewMode(
+                var rawChartAudioTime = SoflanRuntimeTime.ToRawChartAudioTime(
+                    runtimeCurrentTime,
+                    state.RuntimeChartOffset,
+                    visualAudioOffset);
+                soflanPosition = ConvertAudioTimeToSoflanPosition(
                     playerId,
-                    rawChartAudioMsec,
+                    rawChartAudioTime,
                     soflanGroup);
-                state.CachedCurrentSoflanTimeMap[key] = soflanTime;
+                state.CachedCurrentSoflanPositionMap[key] = soflanPosition;
             }
 
-            return soflanTime;
+            return soflanPosition;
         }
 
         // 调试面板用: soflan 组号 + 当前变速倍率 (值类型, 零堆分配).
@@ -658,39 +855,40 @@ namespace SoflanSupport
             public GroupSpeed(int group, double speed) { Group = group; Speed = speed; }
         }
 
-        // 返回指定 soflan 组在指定音频时间(msec)的当前变速倍率。无该组或无 soflan 时返回 1.0。
-        // 面板每帧调用; 仅 TimeSpan 栈分配 + 同源计算, 无堆分配。
-        public double GetCurrentSpeed(int playerId, int soflanGroup, float runtimeAudioMsec)
+        // 返回指定 soflan 组在指定音频时间的当前变速倍率。无该组或无 soflan 时返回 1.0。
+        public double GetCurrentSpeed(int playerId, int soflanGroup, TimeSpan runtimeAudioTime)
         {
             if (!TryGetPlayerState(playerId, out var state) || !state.ContainSoflans)
                 return 1.0;
             if (!state.SoflanListMap.ContainsKey(soflanGroup))
                 return 1.0;
-            var rawChartAudioMsec = SoflanRuntimeTime.ToRawChartAudioMsec(
-                runtimeAudioMsec,
-                state.RuntimeChartOffsetMsec,
-                0f);
+            var rawChartAudioTime = SoflanRuntimeTime.ToRawChartAudioTime(
+                runtimeAudioTime,
+                state.RuntimeChartOffset,
+                TimeSpan.Zero);
             var tGrid = TGridCalculator.ConvertAudioTimeToTGrid(
-                TimeSpan.FromMilliseconds(rawChartAudioMsec), state.BpmList);
+                rawChartAudioTime,
+                state.BpmList);
             return state.SoflanListMap[soflanGroup].CalculateSpeed(state.BpmList, tGrid);
         }
 
         // 把所有 soflan 组的 (group, currentSpeed) 写入调用方复用的 outList (Clear 后追加), 零 List 分配。
         public void FillCurrentSpeeds(
             int playerId,
-            float runtimeAudioMsec,
+            TimeSpan runtimeAudioTime,
             List<GroupSpeed> outList,
             int maxCount = int.MaxValue)
         {
             outList.Clear();
             if (!TryGetPlayerState(playerId, out var state) || !state.ContainSoflans)
                 return;
-            var rawChartAudioMsec = SoflanRuntimeTime.ToRawChartAudioMsec(
-                runtimeAudioMsec,
-                state.RuntimeChartOffsetMsec,
-                0f);
+            var rawChartAudioTime = SoflanRuntimeTime.ToRawChartAudioTime(
+                runtimeAudioTime,
+                state.RuntimeChartOffset,
+                TimeSpan.Zero);
             var tGrid = TGridCalculator.ConvertAudioTimeToTGrid(
-                TimeSpan.FromMilliseconds(rawChartAudioMsec), state.BpmList);
+                rawChartAudioTime,
+                state.BpmList);
             foreach (KeyValuePair<int, SoflanList> pair in state.SoflanListMap)
             {
                 if (outList.Count >= maxCount)
@@ -699,14 +897,14 @@ namespace SoflanSupport
             }
         }
 
-        public void DumpCurrent(int playerId, int currentTime = -1)
+        public void DumpCurrent(int playerId)
         {
             if (!TryGetPlayerState(playerId, out var state))
                 return;
 
             PatchLog.WriteLine($"-------DUMP SOFLAN TIMING POINTS-------");
             PatchLog.WriteLine($"PlayerId: {playerId}");
-            PatchLog.WriteLine($"RuntimeChartOffsetMsec: {state.RuntimeChartOffsetMsec}");
+            PatchLog.WriteLine($"RuntimeChartOffset: {state.RuntimeChartOffset.TotalMilliseconds}ms");
             foreach (KeyValuePair<int, SoflanList> pair in state.SoflanListMap)
             {
                 var soflanGroup = pair.Key;
@@ -720,19 +918,24 @@ namespace SoflanSupport
             PatchLog.WriteLine($"---------------------------------------");
 
             PatchLog.WriteLine($"containSoflans: {state.ContainSoflans}");
-            PatchLog.WriteLine($"cachedCalculatedCurrentMsec: {state.CachedCalculatedCurrentMsec}");
-            PatchLog.WriteLine($"cachedVisibleRangeListMap:");
-            foreach (KeyValuePair<int, VisibleMsecRangeCache> pair in state.VisibleRangeListMap)
+            PatchLog.WriteLine($"cachedCalculatedCurrentMsec: {state.CachedCalculatedCurrentTime.TotalMilliseconds}");
+            PatchLog.WriteLine($"visibilityFallbackCount: {state.VisibilityFallbackCount}");
+            PatchLog.WriteLine($"cachedVisibleTotalGridRangeListMap:");
+            foreach (KeyValuePair<int, VisibleTotalGridRangeCache> pair in state.VisibleRangeListMap)
             {
                 PatchLog.WriteLine($"[{pair.Key}]:");
                 foreach (var visibleRange in pair.Value.Ranges)
                 {
-                    var rawCurrentMsec = SoflanRuntimeTime.ToRawChartAudioMsec(
-                        state.CachedCalculatedCurrentMsec,
-                        state.RuntimeChartOffsetMsec,
-                        0f);
+                    var rawCurrentTime = SoflanRuntimeTime.ToRawChartAudioTime(
+                        state.CachedCalculatedCurrentTime,
+                        state.RuntimeChartOffset,
+                        TimeSpan.Zero);
+                    var currentPosition = ConvertAudioTimeToSoflanPosition(
+                        playerId,
+                        rawCurrentTime,
+                        pair.Key);
                     PatchLog.WriteLine(
-                        $"\t\t{visibleRange.MinMsec}ms ~ {visibleRange.MaxMsec}ms, current:{ConvertAudioTimeToY_PreviewMode(playerId, rawCurrentMsec, pair.Key)}");
+                        $"\t\t{visibleRange.MinTotalGrid} ~ {visibleRange.MaxTotalGrid} totalGrid, current:{currentPosition.Value}");
                 }
             }
         }

@@ -2,6 +2,7 @@
 using MAI2.Util;
 using Manager;
 using SoflanSupport;
+using System;
 using UnityEngine;
 
 namespace Monitor
@@ -11,7 +12,7 @@ namespace Monitor
         private SoflanManager touchSoflanManager;
         private bool touchIsInSoflan;
         private int touchSoflanGroup;
-        private float touchNoteSoflanTime;
+        private SoflanPosition touchNoteSoflanPosition;
 
         public extern void orig_Initialize(NoteData note);
 
@@ -29,19 +30,16 @@ namespace Monitor
             if (touchIsInSoflan)
             {
                 touchSoflanGroup = touchSoflanManager.getNoteSoflanGroup(MonitorId, NoteIndex);
-                var noteAudioMsec = touchSoflanManager.getNoteAudioMsecForSoflan(
+                touchNoteSoflanPosition = touchSoflanManager.GetNoteSoflanPosition(
                     MonitorId,
                     NoteIndex,
-                    AppearMsec);
-                touchNoteSoflanTime = touchSoflanManager.ConvertAudioTimeToY_PreviewMode(
-                    MonitorId,
-                    noteAudioMsec,
+                    SoflanRuntimeTime.FromGameMsecBoundary(AppearMsec),
                     touchSoflanGroup);
             }
             else
             {
                 touchSoflanGroup = 0;
-                touchNoteSoflanTime = AppearMsec;
+                touchNoteSoflanPosition = new SoflanPosition(AppearMsec);
             }
         }
 
@@ -64,16 +62,16 @@ namespace Monitor
                 ButtonId,
                 SoflanDiagnostic.GetTouchAreaIndex(TouchArea, ButtonId),
                 false,
-                AppearMsec,
-                TailMsec,
+                SoflanRuntimeTime.FromGameMsecBoundary(AppearMsec),
+                SoflanRuntimeTime.FromGameMsecBoundary(TailMsec),
                 JudgeType,
-                GetJudgeStartMsec(),
-                GetJudgeEndMsec(),
+                SoflanRuntimeTime.FromGameMsecBoundary(GetJudgeStartMsec()),
+                SoflanRuntimeTime.FromGameMsecBoundary(GetJudgeEndMsec()),
                 JudgeResult,
                 NoteJudge.ETiming.End,
                 EndFlag,
                 IsJudgeNote(),
-                JudgeTimingDiffMsec,
+                SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec),
                 "TouchNoteB.NoteCheck");
         }
 
@@ -85,7 +83,7 @@ namespace Monitor
                 JudgeResult,
                 NoteJudge.ETiming.End,
                 EndFlag,
-                JudgeTimingDiffMsec);
+                SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec));
         }
 
         private bool CheckSupportSoflan()
@@ -101,17 +99,17 @@ namespace Monitor
 
         private float GetTouchNoteYPositionSoflan()
         {
-            float runtimeMsec = NotesManager.GetCurrentMsec();
-            float currentSoflanTime = touchSoflanManager.GetCurrentSoflanTimeCached(
+            var runtimeTime = SoflanGameClock.CurrentTime;
+            var currentSoflanPosition = touchSoflanManager.GetCurrentSoflanPositionCached(
                 MonitorId,
-                runtimeMsec,
+                runtimeTime,
                 touchSoflanGroup);
-            float touchDispTime = DefaultMsec * 0.25f;
-            float soflanStartTime = touchNoteSoflanTime - DefaultMsec - touchDispTime;
-            float diffTime = touchNoteSoflanTime - currentSoflanTime;
+            var touchDispDistance = DefaultMsec * 0.25d;
+            var soflanStartPosition = touchNoteSoflanPosition.Value - DefaultMsec - touchDispDistance;
+            var diffPosition = touchNoteSoflanPosition.DeltaTo(currentSoflanPosition);
 
             NoteStat = NoteStatus.Move;
-            if (currentSoflanTime <= soflanStartTime)
+            if (currentSoflanPosition.Value <= soflanStartPosition)
             {
                 NoteStat = NoteStatus.Init;
                 SpriteRender.color = new Color(1f, 1f, 1f, 0f);
@@ -124,12 +122,12 @@ namespace Monitor
                     NoteIndex,
                     NoteKind,
                     touchSoflanGroup,
-                    runtimeMsec,
-                    currentSoflanTime,
-                    touchNoteSoflanTime,
-                    diffTime,
+                    runtimeTime,
+                    currentSoflanPosition,
+                    touchNoteSoflanPosition,
+                    diffPosition,
                     0f,
-                    DefaultMsec + touchDispTime,
+                    DefaultMsec + touchDispDistance,
                     DefaultMsec,
                     (int)NoteStat,
                     false,
@@ -137,10 +135,12 @@ namespace Monitor
                 return 0f;
             }
 
-            if (currentSoflanTime <= soflanStartTime + touchDispTime)
+            if (currentSoflanPosition.Value <= soflanStartPosition + touchDispDistance)
             {
                 NoteStat = NoteStatus.Scale;
-                float fadeProgress = (currentSoflanTime - soflanStartTime) / touchDispTime;
+                var fadeProgressValue = (currentSoflanPosition.Value - soflanStartPosition)
+                    / touchDispDistance;
+                var fadeProgress = (float)Math.Min(1d, fadeProgressValue);
                 if (fadeProgress > 1f)
                 {
                     fadeProgress = 1f;
@@ -155,12 +155,12 @@ namespace Monitor
                     NoteIndex,
                     NoteKind,
                     touchSoflanGroup,
-                    runtimeMsec,
-                    currentSoflanTime,
-                    touchNoteSoflanTime,
-                    diffTime,
+                    runtimeTime,
+                    currentSoflanPosition,
+                    touchNoteSoflanPosition,
+                    diffPosition,
                     fadeProgress,
-                    DefaultMsec + touchDispTime,
+                    DefaultMsec + touchDispDistance,
                     DefaultMsec,
                     (int)NoteStat,
                     false,
@@ -169,16 +169,15 @@ namespace Monitor
             }
 
             NoteStat = NoteStatus.Move;
-            float gatherProgress = (currentSoflanTime - (soflanStartTime + touchDispTime) + DispAdjustFlame * 16.666666f) / DefaultMsec;
-            gatherProgress = 3.5f * Mathf.Pow(gatherProgress, 4f)
-                           - 3.75f * Mathf.Pow(gatherProgress, 3f)
-                           + 1.45f * Mathf.Pow(gatherProgress, 2f)
-                           - 0.05f * Mathf.Pow(gatherProgress, 1f)
-                           + 0.0005f;
-            if (gatherProgress > 1f)
-            {
-                gatherProgress = 1f;
-            }
+            var gatherProgressValue = (currentSoflanPosition.Value
+                - (soflanStartPosition + touchDispDistance)
+                + DispAdjustFlame * 16.666666d) / DefaultMsec;
+            gatherProgressValue = 3.5d * Math.Pow(gatherProgressValue, 4d)
+                                - 3.75d * Math.Pow(gatherProgressValue, 3d)
+                                + 1.45d * Math.Pow(gatherProgressValue, 2d)
+                                - 0.05d * gatherProgressValue
+                                + 0.0005d;
+            var gatherProgress = (float)Math.Min(1d, gatherProgressValue);
             SpriteRender.color = new Color(1f, 1f, 1f, 1f);
             for (int k = 0; k < DefaultCorlsPos.Length; k++)
             {
@@ -187,19 +186,19 @@ namespace Monitor
             }
             if (null != NoticeObject)
             {
-                NoticeObject.SetActive(touchNoteSoflanTime <= currentSoflanTime);
+                NoticeObject.SetActive(touchNoteSoflanPosition.Value <= currentSoflanPosition.Value);
             }
             SoflanDiagnostic.VisualSample(
                 MonitorId,
                 NoteIndex,
                 NoteKind,
                 touchSoflanGroup,
-                runtimeMsec,
-                currentSoflanTime,
-                touchNoteSoflanTime,
-                diffTime,
+                runtimeTime,
+                currentSoflanPosition,
+                touchNoteSoflanPosition,
+                diffPosition,
                 gatherProgress,
-                DefaultMsec + touchDispTime,
+                DefaultMsec + touchDispDistance,
                 DefaultMsec,
                 (int)NoteStat,
                 false,

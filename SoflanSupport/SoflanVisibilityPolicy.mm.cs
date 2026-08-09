@@ -1,3 +1,5 @@
+using System;
+
 namespace SoflanSupport
 {
     /// <summary>
@@ -6,21 +8,21 @@ namespace SoflanSupport
     public static class SoflanVisibilityPolicy
     {
         public static bool IsNormallyDue(
-            float runtimeMsec,
-            float runtimeNoteMsec,
-            float normalVisibleMsec)
+            TimeSpan runtimeTime,
+            TimeSpan runtimeNoteTime,
+            TimeSpan normalVisibleTime)
         {
-            return runtimeMsec >= runtimeNoteMsec - normalVisibleMsec;
+            return runtimeTime >= runtimeNoteTime - normalVisibleTime;
         }
 
         public static bool ShouldRegisterNote(
             bool soflanVisible,
-            float runtimeMsec,
-            float runtimeNoteMsec,
-            float normalVisibleMsec)
+            TimeSpan runtimeTime,
+            TimeSpan runtimeNoteTime,
+            TimeSpan normalVisibleTime)
         {
             return soflanVisible
-                || IsNormallyDue(runtimeMsec, runtimeNoteMsec, normalVisibleMsec);
+                || IsNormallyDue(runtimeTime, runtimeNoteTime, normalVisibleTime);
         }
     }
 }

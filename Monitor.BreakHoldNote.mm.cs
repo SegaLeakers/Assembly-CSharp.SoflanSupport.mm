@@ -4,6 +4,7 @@ using MAI2.Util;
 using Manager;
 using OngekiFumenEditor.Core.Utils;
 using SoflanSupport;
+using System;
 using UnityEngine;
 
 namespace Monitor
@@ -13,9 +14,9 @@ namespace Monitor
         private SoflanManager breakHoldSoflanManager;
         private bool breakHoldIsInSoflan;
         private int breakHoldSoflanGroup;
-        private float breakHoldHeadSoflanTime;
-        private float breakHoldTailSoflanTime;
-        private float breakHoldMaiBugAdjustMsec;
+        private SoflanPosition breakHoldHeadSoflanPosition;
+        private SoflanPosition breakHoldTailSoflanPosition;
+        private TimeSpan breakHoldMaiBugAdjust;
 
         public extern void orig_Initialize(NoteData note);
 
@@ -28,32 +29,26 @@ namespace Monitor
             if (breakHoldIsInSoflan)
             {
                 breakHoldSoflanGroup = breakHoldSoflanManager.getNoteSoflanGroup(MonitorId, NoteIndex);
-                var headAudioMsec = breakHoldSoflanManager.getNoteAudioMsecForSoflan(
+                breakHoldHeadSoflanPosition = breakHoldSoflanManager.GetNoteSoflanPosition(
                     MonitorId,
                     NoteIndex,
-                    AppearMsec);
-                var tailAudioMsec = breakHoldSoflanManager.getNoteEndAudioMsecForSoflan(
-                    MonitorId,
-                    NoteIndex,
-                    TailMsec);
-                breakHoldHeadSoflanTime = breakHoldSoflanManager.ConvertAudioTimeToY_PreviewMode(
-                    MonitorId,
-                    headAudioMsec,
+                    SoflanRuntimeTime.FromGameMsecBoundary(AppearMsec),
                     breakHoldSoflanGroup);
-                breakHoldTailSoflanTime = breakHoldSoflanManager.ConvertAudioTimeToY_PreviewMode(
+                breakHoldTailSoflanPosition = breakHoldSoflanManager.GetNoteEndSoflanPosition(
                     MonitorId,
-                    tailAudioMsec,
+                    NoteIndex,
+                    SoflanRuntimeTime.FromGameMsecBoundary(TailMsec),
                     breakHoldSoflanGroup);
             }
             else
             {
                 breakHoldSoflanGroup = 0;
-                breakHoldHeadSoflanTime = AppearMsec;
-                breakHoldTailSoflanTime = TailMsec;
+                breakHoldHeadSoflanPosition = new SoflanPosition(AppearMsec);
+                breakHoldTailSoflanPosition = new SoflanPosition(TailMsec);
             }
-            breakHoldMaiBugAdjustMsec = SoflanVisualTiming.GetMaiBugAdjustMsec(
+            breakHoldMaiBugAdjust = SoflanVisualTiming.GetMaiBugAdjust(
                 note.type.getEnum(),
-                2f * DefaultMsec);
+                SoflanRuntimeTime.FromMilliseconds(2d * DefaultMsec));
         }
 
         public extern void orig_Execute();
@@ -62,22 +57,22 @@ namespace Monitor
         {
             if (breakHoldIsInSoflan && CheckSupportSoflan())
             {
-                float currentMsec = NotesManager.GetCurrentMsec();
-                float currentSoflanTime = breakHoldSoflanManager.GetCurrentSoflanTimeWithOffsetsCached(
+                var currentTime = SoflanGameClock.CurrentTime;
+                var currentSoflanPosition = breakHoldSoflanManager.GetCurrentSoflanPositionWithOffsetsCached(
                     MonitorId,
-                    currentMsec,
-                    breakHoldMaiBugAdjustMsec,
+                    currentTime,
+                    breakHoldMaiBugAdjust,
                     breakHoldSoflanGroup);
 
-                float headDiffTime = breakHoldHeadSoflanTime - currentSoflanTime;
-                float tailDiffTime = breakHoldTailSoflanTime - currentSoflanTime;
+                var headDiffPosition = breakHoldHeadSoflanPosition.DeltaTo(currentSoflanPosition);
+                var tailDiffPosition = breakHoldTailSoflanPosition.DeltaTo(currentSoflanPosition);
 
-                ExecuteSoflanVisual(headDiffTime, tailDiffTime, currentMsec);
+                ExecuteSoflanVisual(headDiffPosition, tailDiffPosition, currentTime);
                 const string diagnosticSource = "BreakHoldNote.ExecuteSoflan";
                 var diagnosticProbe = BeginNoteCheckDiagnostics(diagnosticSource);
                 orig_NoteCheck();
                 EndNoteCheckDiagnostics(diagnosticProbe, diagnosticSource);
-                ApplySoflanScale(headDiffTime);
+                ApplySoflanScale(headDiffPosition);
                 return;
             }
 
@@ -95,13 +90,13 @@ namespace Monitor
 
             if (breakHoldIsInSoflan && CheckSupportSoflan())
             {
-                float currentSoflanTime = breakHoldSoflanManager.GetCurrentSoflanTimeWithOffsetsCached(
+                var currentSoflanPosition = breakHoldSoflanManager.GetCurrentSoflanPositionWithOffsetsCached(
                     MonitorId,
-                    NotesManager.GetCurrentMsec(),
-                    breakHoldMaiBugAdjustMsec,
+                    SoflanGameClock.CurrentTime,
+                    breakHoldMaiBugAdjust,
                     breakHoldSoflanGroup);
 
-                ApplySoflanScale(breakHoldHeadSoflanTime - currentSoflanTime);
+                ApplySoflanScale(breakHoldHeadSoflanPosition.DeltaTo(currentSoflanPosition));
             }
         }
 
@@ -114,16 +109,16 @@ namespace Monitor
                 ButtonId,
                 -1,
                 true,
-                AppearMsec,
-                TailMsec,
+                SoflanRuntimeTime.FromGameMsecBoundary(AppearMsec),
+                SoflanRuntimeTime.FromGameMsecBoundary(TailMsec),
                 JudgeType,
-                GetJudgeStartMsec(),
-                GetJudgeEndMsec(),
+                SoflanRuntimeTime.FromGameMsecBoundary(GetJudgeStartMsec()),
+                SoflanRuntimeTime.FromGameMsecBoundary(GetJudgeEndMsec()),
                 JudgeResult,
                 GetJudgeHeadResult(),
                 EndFlag,
                 IsJudgeNote(),
-                JudgeTimingDiffMsec,
+                SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec),
                 source);
         }
 
@@ -136,7 +131,7 @@ namespace Monitor
                 JudgeResult,
                 GetJudgeHeadResult(),
                 EndFlag,
-                JudgeTimingDiffMsec);
+                SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec));
             SoflanDiagnostic.HoldState(
                 MonitorId,
                 NoteIndex,
@@ -145,12 +140,15 @@ namespace Monitor
                 BodyOn,
                 LastHoldState,
                 TrigetOn,
-                HoldReleaseTime,
+                SoflanRuntimeTime.FromMilliseconds(HoldReleaseTime),
                 EndFlag,
                 source);
         }
 
-        private void ExecuteSoflanVisual(float headDiffTime, float tailDiffTime, float currentMsec)
+        private void ExecuteSoflanVisual(
+            double headDiffPosition,
+            double tailDiffPosition,
+            TimeSpan currentTime)
         {
             if (EndFlag)
             {
@@ -159,16 +157,19 @@ namespace Monitor
 
             UpdateHoldEffectVisual();
 
-            float moveStartTime = DefaultMsec;
-            float scaleStartTime = 2f * DefaultMsec;
-            float headY = GetHoldHeadYPositionSoflan(headDiffTime, moveStartTime, scaleStartTime);
+            var moveStartDistance = (double)DefaultMsec;
+            var scaleStartDistance = 2d * moveStartDistance;
+            var headY = GetHoldHeadYPositionSoflan(
+                headDiffPosition,
+                moveStartDistance,
+                scaleStartDistance);
 
             if (headY >= EndPos)
             {
                 headY = EndPos;
             }
 
-            if (headDiffTime > moveStartTime)
+            if (headDiffPosition > moveStartDistance)
             {
                 SpriteRender.size = new Vector2(SpriteRender.size.x, DefaultHeight);
                 NoteObj.transform.localPosition = new Vector3(0f, headY, GetBaseZPosition());
@@ -176,31 +177,31 @@ namespace Monitor
             }
             else
             {
-                if (TailMsec <= currentMsec)
+                if (SoflanRuntimeTime.FromGameMsecBoundary(TailMsec) <= currentTime)
                 {
                     NoteObj.transform.localPosition = new Vector3(0f, EndPos, GetBaseZPosition());
                     SpriteRender.size = new Vector2(SpriteRender.size.x, DefaultHeight);
                 }
-                else if (tailDiffTime <= moveStartTime)
+                else if (tailDiffPosition <= moveStartDistance)
                 {
                     if (!EndPointObj.activeSelf)
                     {
                         EndPointObj.SetActive(value: true);
                     }
 
-                    float tailY = GetHoldEndpointYPositionSoflan(tailDiffTime, moveStartTime);
-                    float bodyLength = Mathf.Max(0f, headY - tailY);
+                    var tailY = GetHoldEndpointYPositionSoflan(tailDiffPosition, moveStartDistance);
+                    var bodyLength = Math.Max(0d, headY - tailY);
 
-                    SpriteRender.size = new Vector2(SpriteRender.size.x, bodyLength + DefaultHeight);
-                    NoteObj.transform.localPosition = new Vector3(0f, headY - bodyLength / 2f, GetBaseZPosition());
-                    EndPointObj.transform.localPosition = new Vector3(0f, tailY, GetBaseZPosition());
+                    SpriteRender.size = new Vector2(SpriteRender.size.x, (float)(bodyLength + DefaultHeight));
+                    NoteObj.transform.localPosition = new Vector3(0f, (float)(headY - bodyLength / 2d), GetBaseZPosition());
+                    EndPointObj.transform.localPosition = new Vector3(0f, (float)tailY, GetBaseZPosition());
                 }
                 else
                 {
-                    float bodyLength = Mathf.Max(0f, headY - StartPos);
+                    var bodyLength = Math.Max(0d, headY - StartPos);
 
-                    SpriteRender.size = new Vector2(SpriteRender.size.x, bodyLength + DefaultHeight);
-                    NoteObj.transform.localPosition = new Vector3(0f, headY - bodyLength / 2f, GetBaseZPosition());
+                    SpriteRender.size = new Vector2(SpriteRender.size.x, (float)(bodyLength + DefaultHeight));
+                    NoteObj.transform.localPosition = new Vector3(0f, (float)(headY - bodyLength / 2d), GetBaseZPosition());
                     EndPointObj.transform.localPosition = new Vector3(0f, StartPos, GetBaseZPosition());
                 }
             }
@@ -214,21 +215,24 @@ namespace Monitor
                 NoteIndex,
                 NoteKind,
                 breakHoldSoflanGroup,
-                currentMsec,
-                breakHoldHeadSoflanTime - headDiffTime,
-                breakHoldHeadSoflanTime,
-                headDiffTime,
-                headY,
-                scaleStartTime,
-                moveStartTime,
+                currentTime,
+                new SoflanPosition(breakHoldHeadSoflanPosition.Value - headDiffPosition),
+                breakHoldHeadSoflanPosition,
+                headDiffPosition,
+                (float)headY,
+                scaleStartDistance,
+                moveStartDistance,
                 (int)NoteStat,
                 false,
                 "BreakHoldNote.ExecuteSoflanVisual");
         }
 
-        private float GetHoldHeadYPositionSoflan(float diffTime, float moveStartTime, float scaleStartTime)
+        private float GetHoldHeadYPositionSoflan(
+            double diffPosition,
+            double moveStartDistance,
+            double scaleStartDistance)
         {
-            if (diffTime > scaleStartTime)
+            if (diffPosition > scaleStartDistance)
             {
                 if (NoteGuideTrans != null)
                 {
@@ -236,12 +240,17 @@ namespace Monitor
                     GuideObj.SetAlpha(0f);
                 }
             }
-            else if (diffTime > moveStartTime)
+            else if (diffPosition > moveStartDistance)
             {
                 NoteStat = NoteStatus.Scale;
                 if (NoteGuideTrans != null)
                 {
-                    float scaleProgress = MathUtils.MapValue(diffTime, scaleStartTime, moveStartTime, 0f, 1f);
+                    var scaleProgress = (float)SoflanVisualMath.MapValue(
+                        diffPosition,
+                        scaleStartDistance,
+                        moveStartDistance,
+                        0d,
+                        1d);
                     NoteGuideTrans.localScale = new Vector3(0.25f, 0.25f, 1f);
                     GuideObj.SetAlpha(scaleProgress);
                 }
@@ -251,8 +260,13 @@ namespace Monitor
                 NoteStat = NoteStatus.Move;
                 if (NoteGuideTrans != null)
                 {
-                    float moveProgress = MathUtils.MapValue(diffTime, 0f, moveStartTime, 1f, 0f, false);
-                    moveProgress = Mathf.Max(0f, moveProgress);
+                    var moveProgress = (float)Math.Max(0d, SoflanVisualMath.MapValue(
+                        diffPosition,
+                        0d,
+                        moveStartDistance,
+                        1d,
+                        0d,
+                        false));
                     float finalScale = 0.25f + 0.75f * moveProgress;
                     float guideScale = !GuideStop || finalScale <= 1f ? finalScale : 1f;
 
@@ -261,35 +275,40 @@ namespace Monitor
                 }
             }
 
-            return GetHoldYPositionSoflan(diffTime, moveStartTime);
+            return GetHoldYPositionSoflan(diffPosition, moveStartDistance);
         }
 
-        private float GetHoldEndpointYPositionSoflan(float diffTime, float moveStartTime)
+        private float GetHoldEndpointYPositionSoflan(double diffPosition, double moveStartDistance)
         {
-            return GetHoldYPositionSoflan(diffTime, moveStartTime);
+            return GetHoldYPositionSoflan(diffPosition, moveStartDistance);
         }
 
-        private float GetHoldYPositionSoflan(float diffTime, float moveStartTime)
+        private float GetHoldYPositionSoflan(double diffPosition, double moveStartDistance)
         {
-            float insideY = StartPos;
-            float outsideY = EndPos + (EndPos - StartPos);
-            float y = MathUtils.MapValue(diffTime, -moveStartTime, moveStartTime, outsideY, insideY);
+            var insideY = (double)StartPos;
+            var outsideY = EndPos + (double)(EndPos - StartPos);
+            var y = SoflanVisualMath.MapValue(
+                diffPosition,
+                -moveStartDistance,
+                moveStartDistance,
+                outsideY,
+                insideY);
 
-            return Mathf.Clamp(y, StartPos, EndPos);
+            return (float)Math.Max(StartPos, Math.Min(EndPos, y));
         }
 
-        private void ApplySoflanScale(float headDiffTime)
+        private void ApplySoflanScale(double headDiffPosition)
         {
             if (EndFlag)
             {
                 return;
             }
 
-            float moveStartTime = DefaultMsec;
-            float scaleStartTime = 2f * DefaultMsec;
-            float scale = headDiffTime <= moveStartTime
+            var moveStartDistance = (double)DefaultMsec;
+            var scaleStartDistance = 2d * moveStartDistance;
+            float scale = headDiffPosition <= moveStartDistance
                 ? 1f
-                : Mathf.Clamp01((scaleStartTime - headDiffTime) / DefaultMsec);
+                : Mathf.Clamp01((float)((scaleStartDistance - headDiffPosition) / moveStartDistance));
             float noteSize = Singleton<GamePlayManager>.Instance.GetGameScore(MonitorId).UserOption.NoteSize.GetValue();
 
             NoteObj.transform.localScale = new Vector3(scale * noteSize, scale, 0f);

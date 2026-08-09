@@ -31,29 +31,29 @@ namespace SoflanSupport
             }
         }
 
-        public static float GetMaiBugAdjustMsec(NotesTypeID.Def noteKind, float visibleMsec)
+        public static TimeSpan GetMaiBugAdjust(NotesTypeID.Def noteKind, TimeSpan visibleTime)
         {
             return UsesMaiBugAdjustment(noteKind)
-                ? MaiBugAdjust.CalculateFromVisibleMsec(
-                    visibleMsec,
+                ? MaiBugAdjust.CalculateFromVisibleTime(
+                    visibleTime,
                     Setting.EnableSoflanMaiBugAdjust)
-                : 0f;
+                : TimeSpan.Zero;
         }
 
-        public static float GetRuntimeChartOffsetMsec(int monitorId)
+        public static TimeSpan GetRuntimeChartOffset(int monitorId)
         {
             try
             {
-                var runtimeChartOffsetMsec = Singleton<GamePlayManager>.Instance
+                var runtimeChartOffsetValue = Singleton<GamePlayManager>.Instance
                     .GetGameScore(monitorId)
                     .UserOption
                     .GetAdjustMSec();
-                if (!float.IsNaN(runtimeChartOffsetMsec)
-                    && !float.IsInfinity(runtimeChartOffsetMsec))
-                    return runtimeChartOffsetMsec;
+                if (!float.IsNaN(runtimeChartOffsetValue)
+                    && !float.IsInfinity(runtimeChartOffsetValue))
+                    return SoflanRuntimeTime.FromGameMsecBoundary(runtimeChartOffsetValue);
 
                 PatchLog.Error(
-                    $"invalid GetAdjustMSec for monitor {monitorId}: {runtimeChartOffsetMsec}");
+                    $"invalid GetAdjustMSec for monitor {monitorId}: {runtimeChartOffsetValue}");
             }
             catch (Exception exception)
             {
@@ -61,7 +61,7 @@ namespace SoflanSupport
                     $"GetAdjustMSec failed for monitor {monitorId}: {exception.Message}");
             }
 
-            return 0f;
+            return TimeSpan.Zero;
         }
     }
 }
