@@ -70,17 +70,33 @@ internal static class Program
         Near(MaiBugAdjust.Calculate(NoteSpeed, false), 0f,
             "disabled speed adjustment");
         Near(MaiBugAdjust.Calculate(75f), 13.333333f, "speed 75 positive adjustment");
-        Near(MaiBugAdjust.CalculateFromDefaultMsec(DefaultMsec), -10f,
+        Near(MaiBugAdjust.CalculateFromDefaultTime(
+                SoflanRuntimeTime.FromMilliseconds(DefaultMsec)),
+            -10f,
             "default-msec adjustment");
-        Near(MaiBugAdjust.CalculateFromDefaultMsec(DefaultMsec, false), 0f,
+        Near(MaiBugAdjust.CalculateFromDefaultTime(
+                SoflanRuntimeTime.FromMilliseconds(DefaultMsec),
+                false),
+            0f,
             "disabled default-msec adjustment");
-        Near(MaiBugAdjust.CalculateFromVisibleMsec(DefaultMsec * 2f), -10f,
+        Near(MaiBugAdjust.CalculateFromVisibleTime(
+                SoflanRuntimeTime.FromMilliseconds(DefaultMsec * 2f)),
+            -10f,
             "visible-msec adjustment");
-        Near(MaiBugAdjust.CalculateFromVisibleMsec(DefaultMsec * 2f, false), 0f,
+        Near(MaiBugAdjust.CalculateFromVisibleTime(
+                SoflanRuntimeTime.FromMilliseconds(DefaultMsec * 2f),
+                false),
+            0f,
             "disabled visible-msec adjustment");
-        Near(MaiBugAdjust.ApplyToAudioMsec(1000f, -10f), 990f,
+        Near(MaiBugAdjust.ApplyToAudioTime(
+                SoflanRuntimeTime.FromMilliseconds(1000),
+                SoflanRuntimeTime.FromMilliseconds(-10)),
+            990f,
             "audio-time application");
-        Near(MaiBugAdjust.ApplyToAudioMsec(5f, -10f), 0f,
+        Near(MaiBugAdjust.ApplyToAudioTime(
+                SoflanRuntimeTime.FromMilliseconds(5),
+                SoflanRuntimeTime.FromMilliseconds(-10)),
+            0f,
             "negative adjusted audio clamp");
 
         Near(MaiBugAdjust.Calculate(0f), 0f, "zero speed fallback");
@@ -91,25 +107,33 @@ internal static class Program
     private static void TestRuntimeChartTimeMath()
     {
         Near(
-            SoflanRuntimeTime.ToRawChartAudioMsec(1060f, 60f, 0f),
+            SoflanRuntimeTime.ToRawChartAudioTime(
+                SoflanRuntimeTime.FromMilliseconds(1060),
+                SoflanRuntimeTime.FromMilliseconds(60),
+                TimeSpan.Zero),
             1000f,
             "runtime chart offset removal");
         Near(
-            SoflanRuntimeTime.ToRawChartAudioMsec(1060f, 60f, -10f),
+            SoflanRuntimeTime.ToRawChartAudioTime(
+                SoflanRuntimeTime.FromMilliseconds(1060),
+                SoflanRuntimeTime.FromMilliseconds(60),
+                SoflanRuntimeTime.FromMilliseconds(-10)),
             990f,
             "runtime chart offset then MaiBug application");
         Near(
-            SoflanRuntimeTime.ToRawChartAudioMsec(50f, 60f, -10f),
+            SoflanRuntimeTime.ToRawChartAudioTime(
+                SoflanRuntimeTime.FromMilliseconds(50),
+                SoflanRuntimeTime.FromMilliseconds(60),
+                SoflanRuntimeTime.FromMilliseconds(-10)),
             0f,
             "combined offset clamps after conversion");
         Near(
-            SoflanRuntimeTime.NormalizeRuntimeChartOffsetMsec(float.NaN),
-            0f,
-            "invalid runtime chart offset fallback");
-        Near(
-            SoflanRuntimeTime.ToRawChartAudioMsec(float.PositiveInfinity, 60f, 0f),
-            0f,
-            "invalid runtime current fallback");
+            SoflanRuntimeTime.ToRawChartAudioTime(
+                SoflanRuntimeTime.FromMilliseconds(1060.125),
+                SoflanRuntimeTime.FromMilliseconds(60.025),
+                SoflanRuntimeTime.FromMilliseconds(-10.05)),
+            990.05,
+            "sub-millisecond runtime conversion");
     }
 
     private static void TestReverseSoflanRegistrationPreservesLaneJudgeOrder()
@@ -160,20 +184,20 @@ internal static class Program
         var moveStart = Calculate(data, note, noteMsec - 390f);
         Require(moveStart.MaiBugAdjustEnabled,
             "default calculation should enable the adjustment");
-        Near(moveStart.MaiBugAdjustMSec, -10f, "1x adjustment");
-        Near(moveStart.MaiBugAdjustedCurrentMsec, noteMsec - DefaultMsec,
+        Near(moveStart.MaiBugAdjust, -10f, "1x adjustment");
+        Near(moveStart.MaiBugAdjustedCurrentTime, noteMsec - DefaultMsec,
             "1x adjusted audio at move start");
-        Near(moveStart.DiffTime, DefaultMsec, "1x move-start diff");
+        Near(moveStart.DiffPosition, DefaultMsec, "1x move-start diff");
         Near(moveStart.SoflanY, StartPos, "1x move-start Y");
         Require(moveStart.NoteStat == NoteStat.Move, "1x move-start state should be Move");
 
         var scaleStart = Calculate(data, note, noteMsec - 790f);
-        Near(scaleStart.DiffTime, DefaultMsec * 2f, "1x scale-start diff");
+        Near(scaleStart.DiffPosition, DefaultMsec * 2f, "1x scale-start diff");
         Require(scaleStart.NoteStat == NoteStat.Scale, "1x scale-start state should be Scale");
 
         // 原版高速物件在判定时保留 MaiBug 的细小位置滞后：600 速时为 7px。
         var judgment = Calculate(data, note, noteMsec);
-        Near(judgment.DiffTime, 10f, "1x judgment adjusted diff");
+        Near(judgment.DiffPosition, 10f, "1x judgment adjusted diff");
         Near(judgment.SoflanY, 393f, "1x judgment Y parity");
     }
 
@@ -198,11 +222,11 @@ internal static class Program
             NoteSpeed,
             true,
             DefaultRuntimeChartOffsetMsec);
-        Near(moveStart.RawChartCurrentMsec, rawNoteMsec - 390f,
+        Near(moveStart.RawChartCurrentTime, rawNoteMsec - 390f,
             "1x runtime-offset raw current at move start", 0.05f);
-        Near(moveStart.MaiBugAdjustedCurrentMsec, rawNoteMsec - DefaultMsec,
+        Near(moveStart.MaiBugAdjustedCurrentTime, rawNoteMsec - DefaultMsec,
             "1x runtime-offset adjusted current at move start", 0.05f);
-        Near(moveStart.DiffTime, DefaultMsec,
+        Near(moveStart.DiffPosition, DefaultMsec,
             "1x runtime-offset move-start diff", 0.05f);
         Near(moveStart.SoflanY, StartPos,
             "1x runtime-offset move-start Y", 0.05f);
@@ -214,7 +238,7 @@ internal static class Program
             NoteSpeed,
             true,
             DefaultRuntimeChartOffsetMsec);
-        Near(enabledJudgment.DiffTime, 10f,
+        Near(enabledJudgment.DiffPosition, 10f,
             "1x runtime-offset enabled judgment diff", 0.05f);
         Near(enabledJudgment.SoflanY, 393f,
             "1x runtime-offset enabled judgment Y", 0.05f);
@@ -226,7 +250,7 @@ internal static class Program
             NoteSpeed,
             false,
             DefaultRuntimeChartOffsetMsec);
-        Near(disabledJudgment.DiffTime, 0f,
+        Near(disabledJudgment.DiffPosition, 0f,
             "1x runtime-offset disabled judgment diff", 0.05f);
         Near(disabledJudgment.SoflanY, EndPos,
             "1x runtime-offset disabled judgment Y", 0.05f);
@@ -252,7 +276,7 @@ internal static class Program
         var missingChartOffsetEnabled = Calculate(
             data, note, runtimeNoteMsec, NoteSpeed, true, 0f);
         Near(
-            correctedEnabled.DiffTime - missingChartOffsetEnabled.DiffTime,
+            correctedEnabled.DiffPosition - missingChartOffsetEnabled.DiffPosition,
             60f,
             "missing chart offset enabled regression magnitude",
             0.05f);
@@ -260,7 +284,7 @@ internal static class Program
         var missingChartOffsetDisabled = Calculate(
             data, note, runtimeNoteMsec, NoteSpeed, false, 0f);
         Near(
-            correctedEnabled.DiffTime - missingChartOffsetDisabled.DiffTime,
+            correctedEnabled.DiffPosition - missingChartOffsetDisabled.DiffPosition,
             70f,
             "missing chart offset plus disabled MaiBug regression magnitude",
             0.05f);
@@ -280,7 +304,7 @@ internal static class Program
 
         // 无补偿时 2x 在 200ms 前进入；-10ms 原版补偿应使其在 190ms 前进入。
         var result = Calculate(data, BuildNote(2, 0), noteMsec - 190f);
-        Near(result.DiffTime, DefaultMsec, "2x move-start diff");
+        Near(result.DiffPosition, DefaultMsec, "2x move-start diff");
         Near(result.SoflanY, StartPos, "2x move-start Y");
     }
 
@@ -305,16 +329,16 @@ internal static class Program
             false);
         Require(!moveStart.MaiBugAdjustEnabled,
             "disabled calculation should report the switch state");
-        Near(moveStart.MaiBugAdjustMSec, 0f, "disabled adjustment value");
-        Near(moveStart.MaiBugAdjustedCurrentMsec, moveStart.CurrentMsec,
+        Near(moveStart.MaiBugAdjust, 0f, "disabled adjustment value");
+        Near(moveStart.MaiBugAdjustedCurrentTime, moveStart.CurrentTime,
             "disabled adjusted audio should equal raw audio");
-        Near(moveStart.CurrentSoflanTime, moveStart.RawCurrentSoflanTime,
+        Near(moveStart.CurrentSoflanPosition, moveStart.RawCurrentSoflanPosition,
             "disabled Soflan current time should remain raw");
-        Near(moveStart.DiffTime, DefaultMsec, "disabled move-start diff");
+        Near(moveStart.DiffPosition, DefaultMsec, "disabled move-start diff");
         Near(moveStart.SoflanY, StartPos, "disabled move-start Y");
 
         var judgment = Calculate(data, note, noteMsec, NoteSpeed, false);
-        Near(judgment.DiffTime, 0f, "disabled judgment diff");
+        Near(judgment.DiffPosition, 0f, "disabled judgment diff");
         Near(judgment.SoflanY, EndPos, "disabled judgment Y");
     }
 
@@ -340,11 +364,25 @@ internal static class Program
             note,
             noteMsec - slowDefaultMsec - slowAdjustMsec,
             slowNoteSpeed);
-        Near(moveStart.MaiBugAdjustMSec, slowAdjustMsec, "slow-speed adjustment");
-        Near(moveStart.DiffTime, slowDefaultMsec, "slow-speed move-start diff");
+        Near(moveStart.MaiBugAdjust, slowAdjustMsec, "slow-speed adjustment");
+        Near(moveStart.DiffPosition, slowDefaultMsec, "slow-speed move-start diff");
         Near(moveStart.SoflanY, StartPos, "slow-speed move-start Y");
-        Require(moveStart.NoteStat == NoteStat.Move,
-            "slow-speed move-start state should be Move");
+        Require(moveStart.NoteStat == NoteStat.Scale,
+            "float move-start input before the exact TimeSpan threshold should be Scale");
+
+        var exactMoveStart = SoflanCalcEngine.Calculate(
+            data,
+            note,
+            SoflanRuntimeTime.FromMilliseconds(noteMsec)
+                - SoflanRuntimeTime.FromMilliseconds(slowDefaultMsec)
+                - MaiBugAdjust.Calculate(slowNoteSpeed),
+            slowNoteSpeed,
+            StartPos,
+            EndPos);
+        Near(exactMoveStart.DiffPosition, slowDefaultMsec,
+            "slow-speed exact TimeSpan move-start diff");
+        Require(exactMoveStart.NoteStat == NoteStat.Move,
+            "slow-speed exact TimeSpan move-start state should be Move");
     }
 
     private static void TestConstantDeceleration()
@@ -361,7 +399,7 @@ internal static class Program
 
         // 无补偿时 0.5x 在 800ms 前进入；-10ms 原版补偿应使其在 790ms 前进入。
         var result = Calculate(data, BuildNote(2, 0), noteMsec - 790f);
-        Near(result.DiffTime, DefaultMsec, "0.5x move-start diff");
+        Near(result.DiffPosition, DefaultMsec, "0.5x move-start diff");
         Near(result.SoflanY, StartPos, "0.5x move-start Y");
     }
 
@@ -377,9 +415,9 @@ internal static class Program
         });
         var result = Calculate(data, BuildNote(3, 0), BarMsec * 1.5f);
 
-        Near(result.CurrentSoflanTime, result.RawCurrentSoflanTime,
+        Near(result.CurrentSoflanPosition, result.RawCurrentSoflanPosition,
             "stop should consume no MaiBug Soflan distance");
-        Finite(result.DiffTime, "stop diff");
+        Finite(result.DiffPosition, "stop diff");
         Finite(result.SoflanY, "stop Y");
     }
 
@@ -396,9 +434,9 @@ internal static class Program
         var result = Calculate(data, BuildNote(3, 0), BarMsec * 1.5f);
 
         // current-10ms 位于负速段更靠后的位置，因此调整后的 Y 比原始 Y 高 10。
-        Near(result.CurrentSoflanTime - result.RawCurrentSoflanTime, 10f,
+        Near(result.CurrentSoflanPosition.DeltaTo(result.RawCurrentSoflanPosition), 10f,
             "reverse adjustment direction");
-        Finite(result.DiffTime, "reverse diff");
+        Finite(result.DiffPosition, "reverse diff");
         Finite(result.SoflanY, "reverse Y");
     }
 
@@ -415,7 +453,7 @@ internal static class Program
         var result = Calculate(data, BuildNote(3, 0), BarMsec + 5f);
 
         // 调整区间 [1915, 1925] 跨过边界：前 5ms 为 1x，后 5ms 为 2x，总 Y 差 15。
-        Near(result.RawCurrentSoflanTime - result.CurrentSoflanTime, 15f,
+        Near(result.RawCurrentSoflanPosition.DeltaTo(result.CurrentSoflanPosition), 15f,
             "boundary-integrated adjustment");
     }
 
@@ -442,8 +480,8 @@ internal static class Program
         var fast = Calculate(data, BuildNote(2, 1), noteMsec - 190f);
         var slow = Calculate(data, BuildNote(2, 2), noteMsec - 790f);
 
-        Near(fast.DiffTime, DefaultMsec, "group 1 move-start diff");
-        Near(slow.DiffTime, DefaultMsec, "group 2 move-start diff");
+        Near(fast.DiffPosition, DefaultMsec, "group 1 move-start diff");
+        Near(slow.DiffPosition, DefaultMsec, "group 2 move-start diff");
         Require(Math.Abs(fast.CurrentSoflanSpeed - 2.0) < 0.001,
             "group 1 speed mismatch");
         Require(Math.Abs(slow.CurrentSoflanSpeed - 0.5) < 0.001,
@@ -464,39 +502,41 @@ internal static class Program
         soflanList.Add(oneSpeed);
 
         float noteMsec = 2f * BarMsec;
-        float adjust = MaiBugAdjust.Calculate(NoteSpeed);
-        var output = new List<SoflanList.VisibleMsecRange>();
+        var adjust = MaiBugAdjust.Calculate(NoteSpeed);
+        var output = new List<SoflanList.VisibleTimeSpanRange>();
         var scratch = new SoflanList.VisibleRangeQueryScratch();
 
         // 原版 scale 起点：判定前 790ms。使用偏移后的 Soflan 当前时间时，窗口恰好包含 note。
         float visibleStartMsec = noteMsec - 790f;
         double visibleStartY = TGridCalculator.ConvertAudioTimeToY_PreviewMode(
-            TimeSpan.FromMilliseconds(visibleStartMsec + adjust),
+            SoflanRuntimeTime.FromMilliseconds(
+                visibleStartMsec + adjust.TotalMilliseconds),
             soflanList,
             bpmList,
             1);
-        soflanList.FillVisibleMsecRangesForGamePreview(
+        soflanList.FillVisibleTimeSpanRangesForGamePreview(
             visibleStartY,
             DefaultMsec * 2f,
             bpmList,
             output,
             scratch);
-        Require(Contains(output, noteMsec),
+        Require(Contains(output, SoflanRuntimeTime.FromMilliseconds(noteMsec)),
             "MaiBug-adjusted visibility should include the note at visual scale start");
 
         // 提前一个 5ms grid 时仍不应注册。
         double beforeStartY = TGridCalculator.ConvertAudioTimeToY_PreviewMode(
-            TimeSpan.FromMilliseconds(visibleStartMsec - 5f + adjust),
+            SoflanRuntimeTime.FromMilliseconds(
+                visibleStartMsec - 5f + adjust.TotalMilliseconds),
             soflanList,
             bpmList,
             1);
-        soflanList.FillVisibleMsecRangesForGamePreview(
+        soflanList.FillVisibleTimeSpanRangesForGamePreview(
             beforeStartY,
             DefaultMsec * 2f,
             bpmList,
             output,
             scratch);
-        Require(!Contains(output, noteMsec),
+        Require(!Contains(output, SoflanRuntimeTime.FromMilliseconds(noteMsec)),
             "MaiBug-adjusted visibility registered the note before visual scale start");
 
         // 开关关闭时窗口从原始 currentMsec 开始，1x 下应回到判定前 800ms。
@@ -506,13 +546,13 @@ internal static class Program
             soflanList,
             bpmList,
             1);
-        soflanList.FillVisibleMsecRangesForGamePreview(
+        soflanList.FillVisibleTimeSpanRangesForGamePreview(
             disabledVisibleStartY,
             DefaultMsec * 2f,
             bpmList,
             output,
             scratch);
-        Require(Contains(output, noteMsec),
+        Require(Contains(output, SoflanRuntimeTime.FromMilliseconds(noteMsec)),
             "disabled-adjustment visibility should include the note at the raw window start");
 
         double beforeDisabledStartY = TGridCalculator.ConvertAudioTimeToY_PreviewMode(
@@ -520,13 +560,13 @@ internal static class Program
             soflanList,
             bpmList,
             1);
-        soflanList.FillVisibleMsecRangesForGamePreview(
+        soflanList.FillVisibleTimeSpanRangesForGamePreview(
             beforeDisabledStartY,
             DefaultMsec * 2f,
             bpmList,
             output,
             scratch);
-        Require(!Contains(output, noteMsec),
+        Require(!Contains(output, SoflanRuntimeTime.FromMilliseconds(noteMsec)),
             "disabled-adjustment visibility registered the note before the raw window start");
     }
 
@@ -551,15 +591,15 @@ internal static class Program
             soflanList,
             bpmList,
             1);
-        var output = new List<SoflanList.VisibleMsecRange>();
-        soflanList.FillVisibleMsecRangesForGamePreview(
+        var output = new List<SoflanList.VisibleTimeSpanRange>();
+        soflanList.FillVisibleTimeSpanRangesForGamePreview(
             sampledCurrentY,
             normalVisibleMsec,
             bpmList,
             output,
             new SoflanList.VisibleRangeQueryScratch());
 
-        var soflanVisible = Contains(output, noteMsec);
+        var soflanVisible = Contains(output, SoflanRuntimeTime.FromMilliseconds(noteMsec));
         Require(!soflanVisible,
             "100001x Soflan window should be skipped by an 8ms-late frame sample");
         Require(normalVisibleMsec / ultraFastSpeed < 0.01f,
@@ -567,31 +607,31 @@ internal static class Program
         Require(
             SoflanVisibilityPolicy.ShouldRegisterNote(
                 soflanVisible,
-                sampledCurrentMsec,
-                noteMsec,
-                normalVisibleMsec),
+                TimeSpan.FromMilliseconds(sampledCurrentMsec),
+                TimeSpan.FromMilliseconds(noteMsec),
+                TimeSpan.FromMilliseconds(normalVisibleMsec)),
             "normal registration window should recover a skipped ultra-fast Soflan note");
 
         Require(
             !SoflanVisibilityPolicy.ShouldRegisterNote(
                 false,
-                noteMsec - normalVisibleMsec - 1f,
-                noteMsec,
-                normalVisibleMsec),
+                TimeSpan.FromMilliseconds(noteMsec - normalVisibleMsec - 1f),
+                TimeSpan.FromMilliseconds(noteMsec),
+                TimeSpan.FromMilliseconds(normalVisibleMsec)),
             "note should remain blocked before both registration windows");
         Require(
             SoflanVisibilityPolicy.ShouldRegisterNote(
                 false,
-                noteMsec - normalVisibleMsec,
-                noteMsec,
-                normalVisibleMsec),
+                TimeSpan.FromMilliseconds(noteMsec - normalVisibleMsec),
+                TimeSpan.FromMilliseconds(noteMsec),
+                TimeSpan.FromMilliseconds(normalVisibleMsec)),
             "normal registration window should include its exact start boundary");
         Require(
             SoflanVisibilityPolicy.ShouldRegisterNote(
                 true,
-                noteMsec - normalVisibleMsec - 1f,
-                noteMsec,
-                normalVisibleMsec),
+                TimeSpan.FromMilliseconds(noteMsec - normalVisibleMsec - 1f),
+                TimeSpan.FromMilliseconds(noteMsec),
+                TimeSpan.FromMilliseconds(normalVisibleMsec)),
             "early Soflan visibility should still register before the normal window");
     }
 
@@ -650,16 +690,17 @@ internal static class Program
             {
                 for (float rawCurrentMsec = 0f; rawCurrentMsec <= 12000f; rawCurrentMsec += 191.25f)
                 {
-                    var rawReferenceMsec = SoflanRuntimeTime.ToRawChartAudioMsec(
-                        rawCurrentMsec,
-                        0f,
-                        visualAudioOffsetMsec);
-                    var correctedRawMsec = SoflanRuntimeTime.ToRawChartAudioMsec(
-                        rawCurrentMsec + DefaultRuntimeChartOffsetMsec,
-                        DefaultRuntimeChartOffsetMsec,
-                        visualAudioOffsetMsec);
-                    var referenceY = ConvertAudioTimeToY(rawReferenceMsec, soflanList, timeline.BpmList);
-                    var correctedY = ConvertAudioTimeToY(correctedRawMsec, soflanList, timeline.BpmList);
+                    var rawReferenceTime = SoflanRuntimeTime.ToRawChartAudioTime(
+                        SoflanRuntimeTime.FromMilliseconds(rawCurrentMsec),
+                        TimeSpan.Zero,
+                        SoflanRuntimeTime.FromMilliseconds(visualAudioOffsetMsec));
+                    var correctedRawTime = SoflanRuntimeTime.ToRawChartAudioTime(
+                        SoflanRuntimeTime.FromMilliseconds(
+                            rawCurrentMsec + DefaultRuntimeChartOffsetMsec),
+                        SoflanRuntimeTime.FromMilliseconds(DefaultRuntimeChartOffsetMsec),
+                        SoflanRuntimeTime.FromMilliseconds(visualAudioOffsetMsec));
+                    var referenceY = ConvertAudioTimeToY(rawReferenceTime, soflanList, timeline.BpmList);
+                    var correctedY = ConvertAudioTimeToY(correctedRawTime, soflanList, timeline.BpmList);
                     Near(correctedY, referenceY,
                         $"complex visibility current Y group={group} raw={rawCurrentMsec:F3}", 0.05f);
 
@@ -733,20 +774,22 @@ internal static class Program
                 for (var sampleIndex = 0; sampleIndex < samples.Count; sampleIndex++)
                 {
                     var rawCurrentMsec = samples[sampleIndex];
-                    var rawReferenceMsec = SoflanRuntimeTime.ToRawChartAudioMsec(
-                        rawCurrentMsec,
-                        0f,
-                        visualAudioOffsetMsec);
-                    var correctedRawMsec = SoflanRuntimeTime.ToRawChartAudioMsec(
-                        rawCurrentMsec + DefaultRuntimeChartOffsetMsec,
-                        DefaultRuntimeChartOffsetMsec,
-                        visualAudioOffsetMsec);
-                    var rawInputDelta = Math.Abs((double)correctedRawMsec - rawReferenceMsec);
+                    var rawReferenceTime = SoflanRuntimeTime.ToRawChartAudioTime(
+                        SoflanRuntimeTime.FromMilliseconds(rawCurrentMsec),
+                        TimeSpan.Zero,
+                        SoflanRuntimeTime.FromMilliseconds(visualAudioOffsetMsec));
+                    var correctedRawTime = SoflanRuntimeTime.ToRawChartAudioTime(
+                        SoflanRuntimeTime.FromMilliseconds(
+                            rawCurrentMsec + DefaultRuntimeChartOffsetMsec),
+                        SoflanRuntimeTime.FromMilliseconds(DefaultRuntimeChartOffsetMsec),
+                        SoflanRuntimeTime.FromMilliseconds(visualAudioOffsetMsec));
+                    var rawInputDelta = Math.Abs(
+                        (correctedRawTime - rawReferenceTime).TotalMilliseconds);
                     if (rawInputDelta > maxRawInputDelta)
                         maxRawInputDelta = rawInputDelta;
 
-                    var referenceY = ConvertAudioTimeToY(rawReferenceMsec, soflanList, timeline.BpmList);
-                    var correctedY = ConvertAudioTimeToY(correctedRawMsec, soflanList, timeline.BpmList);
+                    var referenceY = ConvertAudioTimeToY(rawReferenceTime, soflanList, timeline.BpmList);
+                    var correctedY = ConvertAudioTimeToY(correctedRawTime, soflanList, timeline.BpmList);
                     var soflanYDelta = Math.Abs((double)correctedY - referenceY);
                     if (soflanYDelta > maxSoflanYDelta)
                         maxSoflanYDelta = soflanYDelta;
@@ -810,7 +853,7 @@ internal static class Program
         double maxObjectScaleDelta = 0d;
         double maxGuideScaleDelta = 0d;
         double maxGuideAlphaDelta = 0d;
-        var maiBugAdjustMsec = MaiBugAdjust.Calculate(NoteSpeed);
+        var maiBugAdjust = MaiBugAdjust.Calculate(NoteSpeed);
 
         foreach (var soflanNote in soflanData.Notes)
         {
@@ -837,12 +880,12 @@ internal static class Program
                 var runtimeCurrentMsec = rawNoteMsec
                     + DefaultRuntimeChartOffsetMsec
                     + sampleOffsetMsec;
-                var correctedRawCurrentMsec = SoflanRuntimeTime.ToRawChartAudioMsec(
-                    runtimeCurrentMsec,
-                    DefaultRuntimeChartOffsetMsec,
-                    maiBugAdjustMsec);
+                var correctedRawCurrentTime = SoflanRuntimeTime.ToRawChartAudioTime(
+                    SoflanRuntimeTime.FromMilliseconds(runtimeCurrentMsec),
+                    SoflanRuntimeTime.FromMilliseconds(DefaultRuntimeChartOffsetMsec),
+                    maiBugAdjust);
                 var correctedCurrentSoflanTime = ConvertAudioTimeToY(
-                    correctedRawCurrentMsec,
+                    correctedRawCurrentTime,
                     identityList,
                     timeline.BpmList);
                 var corrected = BuildTapVisualSnapshot(
@@ -853,12 +896,12 @@ internal static class Program
                 // GetMaiBugAdjustMSec 只加到当前视觉时钟。
                 var originalDiffTime = rawNoteMsec
                     + DefaultRuntimeChartOffsetMsec
-                    - (runtimeCurrentMsec + maiBugAdjustMsec);
-                var original = BuildTapVisualSnapshot(originalDiffTime, DefaultMsec);
+                    - (runtimeCurrentMsec + maiBugAdjust.TotalMilliseconds);
+                var original = BuildTapVisualSnapshot((float)originalDiffTime, DefaultMsec);
 
                 maxDiffTimeDelta = Math.Max(
                     maxDiffTimeDelta,
-                    Math.Abs((double)corrected.DiffTime - original.DiffTime));
+                    Math.Abs(corrected.DiffPosition - original.DiffPosition));
                 maxYDelta = Math.Max(
                     maxYDelta,
                     Math.Abs((double)corrected.Y - original.Y));
@@ -982,7 +1025,7 @@ internal static class Program
 
     private readonly struct TapVisualSnapshot
     {
-        public readonly float DiffTime;
+        public readonly float DiffPosition;
         public readonly float Y;
         public readonly float ObjectScale;
         public readonly float GuideScale;
@@ -997,7 +1040,7 @@ internal static class Program
             float guideAlpha,
             NoteStat noteStat)
         {
-            DiffTime = diffTime;
+            DiffPosition = diffTime;
             Y = y;
             ObjectScale = objectScale;
             GuideScale = guideScale;
@@ -1108,7 +1151,19 @@ internal static class Program
     private static float ConvertAudioTimeToY(float msec, SoflanList soflanList, BpmList bpmList)
     {
         return (float)TGridCalculator.ConvertAudioTimeToY_PreviewMode(
-            TimeSpan.FromMilliseconds(msec), soflanList, bpmList, 1);
+            SoflanRuntimeTime.FromMilliseconds(msec), soflanList, bpmList, 1);
+    }
+
+    private static float ConvertAudioTimeToY(
+        TimeSpan time,
+        SoflanList soflanList,
+        BpmList bpmList)
+    {
+        return (float)TGridCalculator.ConvertAudioTimeToY_PreviewMode(
+            time,
+            soflanList,
+            bpmList,
+            1);
     }
 
     private static void AssertVisibleRangesEqual(
@@ -1119,15 +1174,15 @@ internal static class Program
         float visibleMsec,
         string name)
     {
-        var referenceRanges = new List<SoflanList.VisibleMsecRange>();
-        var correctedRanges = new List<SoflanList.VisibleMsecRange>();
-        soflanList.FillVisibleMsecRangesForGamePreview(
+        var referenceRanges = new List<SoflanList.VisibleTimeSpanRange>();
+        var correctedRanges = new List<SoflanList.VisibleTimeSpanRange>();
+        soflanList.FillVisibleTimeSpanRangesForGamePreview(
             referenceY,
             visibleMsec,
             bpmList,
             referenceRanges,
             new SoflanList.VisibleRangeQueryScratch());
-        soflanList.FillVisibleMsecRangesForGamePreview(
+        soflanList.FillVisibleTimeSpanRangesForGamePreview(
             correctedY,
             visibleMsec,
             bpmList,
@@ -1138,26 +1193,26 @@ internal static class Program
             name + $": range count expected {referenceRanges.Count}, actual {correctedRanges.Count}");
         for (var i = 0; i < referenceRanges.Count; i++)
         {
-            Near((float)correctedRanges[i].MinMsec, (float)referenceRanges[i].MinMsec,
+            Near((float)correctedRanges[i].MinAudioTime.TotalMilliseconds, (float)referenceRanges[i].MinAudioTime.TotalMilliseconds,
                 name + $" range[{i}] min", 0.05f);
-            Near((float)correctedRanges[i].MaxMsec, (float)referenceRanges[i].MaxMsec,
+            Near((float)correctedRanges[i].MaxAudioTime.TotalMilliseconds, (float)referenceRanges[i].MaxAudioTime.TotalMilliseconds,
                 name + $" range[{i}] max", 0.05f);
         }
     }
 
     private static void AssertVisualResultParity(CalcResult actual, CalcResult expected, string name)
     {
-        Near(actual.RawChartCurrentMsec, expected.RawChartCurrentMsec,
+        Near(actual.RawChartCurrentTime, expected.RawChartCurrentTime,
             name + " raw chart current", 0.05f);
-        Near(actual.MaiBugAdjustedCurrentMsec, expected.MaiBugAdjustedCurrentMsec,
+        Near(actual.MaiBugAdjustedCurrentTime, expected.MaiBugAdjustedCurrentTime,
             name + " visual adjusted current", 0.05f);
-        Near(actual.RawCurrentSoflanTime, expected.RawCurrentSoflanTime,
+        Near(actual.RawCurrentSoflanPosition, expected.RawCurrentSoflanPosition,
             name + " raw Soflan time", 0.05f);
-        Near(actual.CurrentSoflanTime, expected.CurrentSoflanTime,
+        Near(actual.CurrentSoflanPosition, expected.CurrentSoflanPosition,
             name + " current Soflan time", 0.05f);
-        Near(actual.DiffTime, expected.DiffTime,
+        Near(actual.DiffPosition, expected.DiffPosition,
             name + " diff", 0.05f);
-        Near(actual.AbsDiffTime, expected.AbsDiffTime,
+        Near(actual.AbsDiffPosition, expected.AbsDiffPosition,
             name + " abs diff", 0.05f);
         Near(actual.SoflanY, expected.SoflanY,
             name + " Y", 0.05f);
@@ -1189,11 +1244,11 @@ internal static class Program
         }
     }
 
-    private static bool Contains(List<SoflanList.VisibleMsecRange> ranges, double msec)
+    private static bool Contains(List<SoflanList.VisibleTimeSpanRange> ranges, TimeSpan audioTime)
     {
         foreach (var range in ranges)
         {
-            if (range.Contain(msec))
+            if (range.Contain(audioTime))
                 return true;
         }
         return false;
@@ -1235,29 +1290,68 @@ internal static class Program
         return SoflanCalcEngine.Calculate(
             data,
             note,
-            currentMsec,
+            SoflanRuntimeTime.FromGameMsecBoundary(currentMsec),
             noteSpeed,
             StartPos,
             EndPos,
             enableMaiBugAdjust,
-            runtimeChartOffsetMsec);
+            SoflanRuntimeTime.FromGameMsecBoundary(runtimeChartOffsetMsec));
     }
 
-    private static void Near(float actual, float expected, string name)
+    private static void Near(double actual, double expected, string name)
     {
         Near(actual, expected, name, Epsilon);
     }
 
-    private static void Near(float actual, float expected, string name, float epsilon)
+    private static void Near(double actual, double expected, string name, double epsilon)
     {
         if (Math.Abs(actual - expected) > epsilon)
             throw new InvalidOperationException(
                 name + $": expected {expected:F6}, actual {actual:F6}, epsilon {epsilon:F6}");
     }
 
-    private static void Finite(float value, string name)
+    private static void Near(TimeSpan actual, double expectedMsec, string name)
     {
-        Require(!float.IsNaN(value) && !float.IsInfinity(value), name + " is not finite");
+        Near(actual.TotalMilliseconds, expectedMsec, name);
+    }
+
+    private static void Near(
+        TimeSpan actual,
+        double expectedMsec,
+        string name,
+        double epsilon)
+    {
+        Near(actual.TotalMilliseconds, expectedMsec, name, epsilon);
+    }
+
+    private static void Near(TimeSpan actual, TimeSpan expected, string name)
+    {
+        Near(actual.TotalMilliseconds, expected.TotalMilliseconds, name);
+    }
+
+    private static void Near(TimeSpan actual, TimeSpan expected, string name, double epsilon)
+    {
+        Near(actual.TotalMilliseconds, expected.TotalMilliseconds, name, epsilon);
+    }
+
+    private static void Near(SoflanPosition actual, double expected, string name)
+    {
+        Near(actual.Value, expected, name);
+    }
+
+    private static void Near(SoflanPosition actual, SoflanPosition expected, string name)
+    {
+        Near(actual.Value, expected.Value, name);
+    }
+
+    private static void Near(SoflanPosition actual, SoflanPosition expected, string name, double epsilon)
+    {
+        Near(actual.Value, expected.Value, name, epsilon);
+    }
+
+    private static void Finite(double value, string name)
+    {
+        Require(!double.IsNaN(value) && !double.IsInfinity(value), name + " is not finite");
     }
 
     private static void Require(bool condition, string message)

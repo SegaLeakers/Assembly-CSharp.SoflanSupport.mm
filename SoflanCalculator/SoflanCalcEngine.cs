@@ -30,38 +30,38 @@ namespace SoflanCalculator
     {
         // --- Parameters ---
         public float NoteSpeedValue;
-        public float SpeedRatio;
-        public float DefaultMsec;
+        public double SpeedRatio;
+        public TimeSpan DefaultTime;
         public bool MaiBugAdjustEnabled;
-        public float MaiBugAdjustMSec;
-        public float StartPos;
-        public float EndPos;
+        public TimeSpan MaiBugAdjust;
+        public double StartPos;
+        public double EndPos;
 
         // --- Note Timing ---
-        public float AppearMsec;
-        public float NoteSoflanTime;
-        public float CurrentMsec;
-        public float RuntimeChartOffsetMsec;
-        public float RawChartCurrentMsec;
-        public float MaiBugAdjustedCurrentMsec;
-        public float RawCurrentSoflanTime;
-        public float CurrentSoflanTime;
+        public TimeSpan AppearTime;
+        public SoflanPosition NoteSoflanPosition;
+        public TimeSpan CurrentTime;
+        public TimeSpan RuntimeChartOffset;
+        public TimeSpan RawChartCurrentTime;
+        public TimeSpan MaiBugAdjustedCurrentTime;
+        public SoflanPosition RawCurrentSoflanPosition;
+        public SoflanPosition CurrentSoflanPosition;
         public double CurrentSoflanSpeed;
 
         // --- Computed Values ---
-        public float DiffTime;
-        public float AbsDiffTime;
-        public float ScaleStartTime;
-        public float MoveStartTime;
+        public double DiffPosition;
+        public double AbsDiffPosition;
+        public double ScaleStartDistance;
+        public double MoveStartDistance;
         public NoteStat NoteStat;
-        public float MoveProgress;
-        public float FinalScale;
-        public float ObjectScaleProgress;
-        public float GuideAlpha;
-        public float InsideY;
-        public float OutsideY;
-        public float SoflanY;
-        public float ClipedSoflanY;
+        public double MoveProgress;
+        public double FinalScale;
+        public double ObjectScaleProgress;
+        public double GuideAlpha;
+        public double InsideY;
+        public double OutsideY;
+        public double SoflanY;
+        public double ClipedSoflanY;
 
         // --- Note Info ---
         public int LineNumber;
@@ -80,21 +80,21 @@ namespace SoflanCalculator
         /// </summary>
         /// <param name="data">解析后的 ma2 数据</param>
         /// <param name="note">目标 note 记录</param>
-        /// <param name="currentMsec">当前播放时间 (msec)</param>
+        /// <param name="currentTime">当前播放时间</param>
         /// <param name="noteSpeedValue">物件速度值 (对应 OptionNotespeedID.GetValue)</param>
         /// <param name="startPos">NoteStart Y 坐标 (从 Unity prefab 读取)</param>
         /// <param name="endPos">NoteEnd Y 坐标 (从 Unity prefab 读取)</param>
         /// <param name="enableMaiBugAdjust">是否让 MaiBug 音频偏移参与 Soflan 计算</param>
-        /// <param name="runtimeChartOffsetMsec">原版 GetAdjustMSec() 加入运行时 note 时间的基础偏移</param>
+        /// <param name="runtimeChartOffset">原版 GetAdjustMSec() 加入运行时 note 时间的基础偏移</param>
         public static CalcResult Calculate(
             Ma2Data data,
             NoteRecord note,
-            float currentMsec,
+            TimeSpan currentTime,
             float noteSpeedValue,
             float startPos,
             float endPos,
             bool enableMaiBugAdjust = true,
-            float runtimeChartOffsetMsec = 0f)
+            TimeSpan runtimeChartOffset = default)
         {
             // --- 构建 BpmList ---
             // 与 SoflanManager.loadComposition 一致:
@@ -130,91 +130,107 @@ namespace SoflanCalculator
             }
 
             // --- 速度参数推导 ---
-            // 与 NoteBase.Initialize + GetMaiBugAdjustMSec 一致
-            float speedRatio = noteSpeedValue / 150f;
-            // DefaultMsec = GetNoteSpeedForBeat * 4 = (60000 / NoteSpeedValue) * 4 = 240000 / NoteSpeedValue
-            float defaultMsec = 240000f / noteSpeedValue;
-            float maiBugAdjustMSec = MaiBugAdjust.Calculate(noteSpeedValue, enableMaiBugAdjust);
+            // 与 NoteBase.Initialize + SoflanVisualTiming.GetMaiBugAdjust 一致
+            double speedRatio = noteSpeedValue / MaiBugAdjust.BaseNoteSpeed;
+            var defaultTime = SoflanRuntimeTime.FromMilliseconds(
+                MaiBugAdjust.DefaultMsecNumerator / noteSpeedValue);
+            var maiBugAdjust = MaiBugAdjust.Calculate(noteSpeedValue, enableMaiBugAdjust);
 
             // --- AppearMsec 计算 ---
             // bar/grid → TGrid → TGridCalculator.ConvertTGridToAudioTime → msec
             var noteTGrid = new TGrid(note.Bar, note.Grid);
-            var appearMsec = (float)TGridCalculator.ConvertTGridToAudioTime(noteTGrid, bpmList).TotalMilliseconds;
+            var appearTime = TGridCalculator.ConvertTGridToAudioTime(noteTGrid, bpmList);
 
-            // --- SoflanTime 计算 ---
+            // --- SoflanPosition 计算 ---
             // ConvertAudioTimeToY_PreviewMode 对 AppearMsec 和 currentTime 分别求值.
             // 与游戏一致: 始终通过 SoflanListMap 索引器获取 SoflanList (缺失组自动创建空列表,
             // 空 SoflanList → speed=1.0 → soflanTime == msec, 与游戏行为完全一致).
             int soflanGroup = note.SoflanGroup;
             var soflanList = soflanMap[soflanGroup];
-            float noteSoflanTime = (float)TGridCalculator.ConvertAudioTimeToY_PreviewMode(
-                TimeSpan.FromMilliseconds(appearMsec), soflanList, bpmList, 1);
-            float normalizedRuntimeChartOffsetMsec =
-                SoflanRuntimeTime.NormalizeRuntimeChartOffsetMsec(runtimeChartOffsetMsec);
-            float rawChartCurrentMsec = SoflanRuntimeTime.ToRawChartAudioMsec(
-                currentMsec,
-                normalizedRuntimeChartOffsetMsec,
-                0f);
-            float rawCurrentSoflanTime = (float)TGridCalculator.ConvertAudioTimeToY_PreviewMode(
-                TimeSpan.FromMilliseconds(rawChartCurrentMsec), soflanList, bpmList, 1);
-            float maiBugAdjustedCurrentMsec = SoflanRuntimeTime.ToRawChartAudioMsec(
-                currentMsec,
-                normalizedRuntimeChartOffsetMsec,
-                maiBugAdjustMSec);
-            float currentSoflanTime = (float)TGridCalculator.ConvertAudioTimeToY_PreviewMode(
-                TimeSpan.FromMilliseconds(maiBugAdjustedCurrentMsec), soflanList, bpmList, 1);
+            var noteSoflanPosition = new SoflanPosition(
+                TGridCalculator.ConvertAudioTimeToY_PreviewMode(
+                    appearTime,
+                    soflanList,
+                    bpmList,
+                    1));
+            var rawChartCurrentTime = SoflanRuntimeTime.ToRawChartAudioTime(
+                currentTime,
+                runtimeChartOffset,
+                TimeSpan.Zero);
+            var rawCurrentSoflanPosition = new SoflanPosition(
+                TGridCalculator.ConvertAudioTimeToY_PreviewMode(
+                    rawChartCurrentTime,
+                    soflanList,
+                    bpmList,
+                    1));
+            var maiBugAdjustedCurrentTime = SoflanRuntimeTime.ToRawChartAudioTime(
+                currentTime,
+                runtimeChartOffset,
+                maiBugAdjust);
+            var currentSoflanPosition = new SoflanPosition(
+                TGridCalculator.ConvertAudioTimeToY_PreviewMode(
+                    maiBugAdjustedCurrentTime,
+                    soflanList,
+                    bpmList,
+                    1));
 
             // --- 当前变速速度 ---
             // 与 SoflanManager.GetCurrentSpeed 一致: currentTime → TGrid → SoflanList.CalculateSpeed.
             // 无 SFL 或无该组时, SoflanList 为空 → CalculateSpeed 返回 1.0.
             var currentTGrid = TGridCalculator.ConvertAudioTimeToTGrid(
-                TimeSpan.FromMilliseconds(rawChartCurrentMsec), bpmList);
+                rawChartCurrentTime,
+                bpmList);
             double currentSoflanSpeed = soflanList.CalculateSpeed(bpmList, currentTGrid);
 
             // --- GetNoteYPosition_soflan 逻辑 ---
             // 与 patch_NoteBase.GetNoteYPosition_soflan 完全一致
-            float diffTime = noteSoflanTime - currentSoflanTime;
-            float absDiffTime = Math.Abs(diffTime);
+            double diffPosition = noteSoflanPosition.DeltaTo(currentSoflanPosition);
+            double absDiffPosition = Math.Abs(diffPosition);
 
-            float scaleStartTime = 2f * defaultMsec;
-            float moveStartTime = defaultMsec;
+            double moveStartDistance = defaultTime.TotalMilliseconds;
+            double scaleStartDistance = 2d * moveStartDistance;
 
             // MaiBug 音频偏移已经随 currentMsec 一起映射进 Soflan Y，
             // 因而无需再叠加独立的坐标偏移。
-            float guideScaleAdj = 0f;
+            double guideScaleAdj = 0d;
 
-            float insideY = startPos;
-            float outsideY = endPos + (endPos - startPos);
+            double insideY = startPos;
+            double outsideY = endPos + (endPos - startPos);
 
-            float soflanY = MathUtils.MapValue(diffTime, -moveStartTime, moveStartTime, outsideY, insideY);
-            float adjustedSoflanY = soflanY;
+            double soflanY = SoflanVisualMath.MapValue(
+                diffPosition,
+                -moveStartDistance,
+                moveStartDistance,
+                outsideY,
+                insideY);
+            double adjustedSoflanY = soflanY;
 
-            float clipedSoflanY = Math.Max(120f, Math.Min(680f, adjustedSoflanY));
+            double clipedSoflanY = Math.Max(120d, Math.Min(680d, adjustedSoflanY));
 
-            float moveProgress = (clipedSoflanY - startPos) / (endPos - startPos);
-            moveProgress = Math.Max(0, moveProgress); // always >= 0
+            double moveProgress = (clipedSoflanY - startPos) / (endPos - startPos);
+            moveProgress = Math.Max(0d, moveProgress);
 
-            float guideScale = 0.75f * moveProgress;
-            float adjustedGuideScale = guideScale + guideScaleAdj;
-            float finalScale = 0.25f + adjustedGuideScale;
+            double guideScale = 0.75d * moveProgress;
+            double adjustedGuideScale = guideScale + guideScaleAdj;
+            double finalScale = 0.25d + adjustedGuideScale;
 
             NoteStat noteStat = NoteStat.Init;
-            float guideAlpha;
+            double guideAlpha;
 
-            if (absDiffTime > scaleStartTime)
+            if (absDiffPosition > scaleStartDistance)
             {
                 // 不修改 NoteStat (保持 Init, Guide 隐藏)
                 guideAlpha = 0f;
             }
-            else if (absDiffTime > moveStartTime)
+            else if (absDiffPosition > moveStartDistance)
             {
                 noteStat = NoteStat.Scale;
-                guideAlpha = MathUtils.MapValue(
-                    absDiffTime,
-                    scaleStartTime,
-                    moveStartTime,
-                    0f,
-                    1f);
+                guideAlpha = SoflanVisualMath.MapValue(
+                    absDiffPosition,
+                    scaleStartDistance,
+                    moveStartDistance,
+                    0d,
+                    1d);
             }
             else
             {
@@ -222,32 +238,32 @@ namespace SoflanCalculator
                 guideAlpha = 1f;
             }
 
-            float objectScaleProgress = Math.Max(
-                0f,
-                Math.Min(1f, (scaleStartTime - absDiffTime) / defaultMsec));
+            double objectScaleProgress = Math.Max(
+                0d,
+                Math.Min(1d, (scaleStartDistance - absDiffPosition) / moveStartDistance));
 
             return new CalcResult
             {
                 NoteSpeedValue = noteSpeedValue,
                 SpeedRatio = speedRatio,
-                DefaultMsec = defaultMsec,
+                DefaultTime = defaultTime,
                 MaiBugAdjustEnabled = enableMaiBugAdjust,
-                MaiBugAdjustMSec = maiBugAdjustMSec,
+                MaiBugAdjust = maiBugAdjust,
                 StartPos = startPos,
                 EndPos = endPos,
-                AppearMsec = appearMsec,
-                NoteSoflanTime = noteSoflanTime,
-                CurrentMsec = currentMsec,
-                RuntimeChartOffsetMsec = normalizedRuntimeChartOffsetMsec,
-                RawChartCurrentMsec = rawChartCurrentMsec,
-                MaiBugAdjustedCurrentMsec = maiBugAdjustedCurrentMsec,
-                RawCurrentSoflanTime = rawCurrentSoflanTime,
-                CurrentSoflanTime = currentSoflanTime,
+                AppearTime = appearTime,
+                NoteSoflanPosition = noteSoflanPosition,
+                CurrentTime = currentTime,
+                RuntimeChartOffset = runtimeChartOffset,
+                RawChartCurrentTime = rawChartCurrentTime,
+                MaiBugAdjustedCurrentTime = maiBugAdjustedCurrentTime,
+                RawCurrentSoflanPosition = rawCurrentSoflanPosition,
+                CurrentSoflanPosition = currentSoflanPosition,
                 CurrentSoflanSpeed = currentSoflanSpeed,
-                DiffTime = diffTime,
-                AbsDiffTime = absDiffTime,
-                ScaleStartTime = scaleStartTime,
-                MoveStartTime = moveStartTime,
+                DiffPosition = diffPosition,
+                AbsDiffPosition = absDiffPosition,
+                ScaleStartDistance = scaleStartDistance,
+                MoveStartDistance = moveStartDistance,
                 NoteStat = noteStat,
                 MoveProgress = moveProgress,
                 FinalScale = finalScale,

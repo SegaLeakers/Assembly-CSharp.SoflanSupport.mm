@@ -10,8 +10,9 @@ namespace SoflanSupport
 {
     internal static class SoflanDiagnostic
     {
-        private const float NearNoteMsec = 2500f;
-        private const float HeartbeatMsec = 250f;
+        private static readonly TimeSpan NearNoteTime = TimeSpan.FromMilliseconds(2500);
+        private static readonly TimeSpan HeartbeatTime = TimeSpan.FromMilliseconds(250);
+        private static readonly TimeSpan HoldHeartbeatTime = TimeSpan.FromMilliseconds(500);
         private static readonly Dictionary<int, PlayerState> PlayerStates = new();
         private static readonly HashSet<string> LoggedErrors = new();
 
@@ -21,7 +22,7 @@ namespace SoflanSupport
             public int PlayerId;
             public int NoteIndex;
             public string Source;
-            public float RuntimeMsec;
+            public TimeSpan RuntimeTime;
             public NoteJudge.ETiming Result;
             public NoteJudge.ETiming HeadResult;
             public bool EndFlag;
@@ -31,29 +32,19 @@ namespace SoflanSupport
         {
             public bool HasSoflan;
             public string ChartPath = string.Empty;
-            public float RuntimeChartOffsetMsec;
-            public float LastFrameMsec = float.NaN;
-            public float LastAnyInputMsec = float.NaN;
+            public TimeSpan RuntimeChartOffset;
+            public TimeSpan? LastFrameTime;
+            public TimeSpan? LastAnyInputTime;
             public string LastAnyInput = "none";
             public readonly bool[] ButtonPush = new bool[8];
-            public readonly float[] ButtonDownMsec = new float[8];
-            public readonly float[] ButtonLastDownMsec = new float[8];
-            public readonly float[] ButtonLastUpMsec = new float[8];
+            public readonly TimeSpan?[] ButtonDownTime = new TimeSpan?[8];
+            public readonly TimeSpan?[] ButtonLastDownTime = new TimeSpan?[8];
+            public readonly TimeSpan?[] ButtonLastUpTime = new TimeSpan?[8];
             public readonly bool[] TouchPush = new bool[34];
-            public readonly float[] TouchDownMsec = new float[34];
-            public readonly float[] TouchLastDownMsec = new float[34];
-            public readonly float[] TouchLastUpMsec = new float[34];
+            public readonly TimeSpan?[] TouchDownTime = new TimeSpan?[34];
+            public readonly TimeSpan?[] TouchLastDownTime = new TimeSpan?[34];
+            public readonly TimeSpan?[] TouchLastUpTime = new TimeSpan?[34];
             public readonly Dictionary<int, NoteState> Notes = new();
-
-            public PlayerState()
-            {
-                FillNaN(ButtonDownMsec);
-                FillNaN(ButtonLastDownMsec);
-                FillNaN(ButtonLastUpMsec);
-                FillNaN(TouchDownMsec);
-                FillNaN(TouchLastDownMsec);
-                FillNaN(TouchLastUpMsec);
-            }
         }
 
         private sealed class NoteState
@@ -63,27 +54,28 @@ namespace SoflanSupport
             public int TouchAreaIndex = -1;
             public bool VisibilityKnown;
             public bool Visible;
-            public float LastVisibilityLogMsec = float.NaN;
+            public TimeSpan? LastVisibilityLogTime;
             public bool VisibilityFallbackLogged;
+            public bool VisibilityTGridFallbackLogged;
             public bool RegisterAttemptLogged;
-            public float LastRegisterAttemptMsec = float.NaN;
+            public TimeSpan? LastRegisterAttemptTime;
             public bool RegisterKnown;
             public bool Registered;
-            public float LastRegisterResultMsec = float.NaN;
+            public TimeSpan? LastRegisterResultTime;
             public bool ObjectInitialized;
             public bool JudgeWindowOpenLogged;
             public bool JudgeDeadlineLogged;
             public bool VisualKnown;
             public int VisualStatus = int.MinValue;
-            public float LastVisualDiff = float.NaN;
-            public float LastVisualLogMsec = float.NaN;
+            public double? LastVisualDiff;
+            public TimeSpan? LastVisualLogTime;
             public bool HoldKnown;
             public NoteJudge.ETiming HoldHeadResult = NoteJudge.ETiming.End;
             public bool HoldHeadJudged;
             public bool HoldBodyOn;
             public bool HoldPressed;
             public bool HoldTrigger;
-            public float LastHoldLogMsec = float.NaN;
+            public TimeSpan? LastHoldLogTime;
             public bool SlideKnown;
             public int SlideHitIndex = -1;
             public int SlideHitCount = -1;
@@ -92,7 +84,7 @@ namespace SoflanSupport
             public string SlideDetail = string.Empty;
             public NoteJudge.ETiming SlideResult = NoteJudge.ETiming.End;
             public bool SlideEndFlag;
-            public float LastSlideLogMsec = float.NaN;
+            public TimeSpan? LastSlideLogTime;
         }
 
         public static void BeginChartLoad(int playerId)
@@ -115,7 +107,7 @@ namespace SoflanSupport
             int playerId,
             string chartPath,
             bool hasSoflan,
-            float runtimeChartOffsetMsec)
+            TimeSpan runtimeChartOffset)
         {
             if (!Setting.EnableSoflanDiagnosticLog)
                 return;
@@ -125,10 +117,10 @@ namespace SoflanSupport
                 var state = GetOrCreatePlayer(playerId);
                 state.HasSoflan = hasSoflan;
                 state.ChartPath = chartPath ?? string.Empty;
-                state.RuntimeChartOffsetMsec = runtimeChartOffsetMsec;
+                state.RuntimeChartOffset = runtimeChartOffset;
                 Write(
                     "SESSION_READY",
-                    $"player={playerId} hasSoflan={B(hasSoflan)} runtimeChartOffsetMsec={F(runtimeChartOffsetMsec)} chart={Q(state.ChartPath)}");
+                    $"player={playerId} hasSoflan={B(hasSoflan)} runtimeChartOffset={F(runtimeChartOffset)} chart={Q(state.ChartPath)}");
             }
             catch (Exception ex)
             {
@@ -187,18 +179,19 @@ namespace SoflanSupport
 
             try
             {
-                var runtimeMsec = NotesManager.GetCurrentMsec();
-                if (!float.IsNaN(state.LastFrameMsec))
+                var runtimeTime = SoflanGameClock.CurrentTime;
+                if (state.LastFrameTime.HasValue)
                 {
-                    var frameDelta = runtimeMsec - state.LastFrameMsec;
-                    if (frameDelta < -1f || frameDelta > 250f)
+                    var frameDelta = runtimeTime - state.LastFrameTime.Value;
+                    if (frameDelta < TimeSpan.FromMilliseconds(-1)
+                        || frameDelta > HeartbeatTime)
                     {
                         Write(
                             "TIME_DISCONTINUITY",
-                            $"player={playerId} previousRuntimeMsec={F(state.LastFrameMsec)} runtimeMsec={F(runtimeMsec)} deltaMsec={F(frameDelta)}");
+                            $"player={playerId} previousRuntimeMsec={F(state.LastFrameTime)} runtimeMsec={F(runtimeTime)} deltaMsec={F(frameDelta)}");
                     }
                 }
-                state.LastFrameMsec = runtimeMsec;
+                state.LastFrameTime = runtimeTime;
 
                 for (var i = 0; i < 8; i++)
                 {
@@ -212,22 +205,22 @@ namespace SoflanSupport
 
                     if (down || (!state.ButtonPush[i] && push))
                     {
-                        state.ButtonDownMsec[i] = runtimeMsec;
-                        state.ButtonLastDownMsec[i] = runtimeMsec;
-                        state.LastAnyInputMsec = runtimeMsec;
+                        state.ButtonDownTime[i] = runtimeTime;
+                        state.ButtonLastDownTime[i] = runtimeTime;
+                        state.LastAnyInputTime = runtimeTime;
                         state.LastAnyInput = "BUTTON:" + button;
                         Write(
                             "INPUT",
-                            $"player={playerId} runtimeMsec={F(runtimeMsec)} device=BUTTON control={button} edge=DOWN inGameDown={B(gameDown)} rawDown={B(rawDown)} inGamePush={B(gamePush)} rawPush={B(rawPush)} used={B(InputManager.IsUsedThisFrame(playerId, button))} pushTime={InputManager.GetButtonPushTime(playerId, button)}");
+                            $"player={playerId} runtimeMsec={F(runtimeTime)} device=BUTTON control={button} edge=DOWN inGameDown={B(gameDown)} rawDown={B(rawDown)} inGamePush={B(gamePush)} rawPush={B(rawPush)} used={B(InputManager.IsUsedThisFrame(playerId, button))} pushTime={InputManager.GetButtonPushTime(playerId, button)}");
                     }
                     if (state.ButtonPush[i] && !push)
                     {
-                        state.ButtonLastUpMsec[i] = runtimeMsec;
-                        state.LastAnyInputMsec = runtimeMsec;
+                        state.ButtonLastUpTime[i] = runtimeTime;
+                        state.LastAnyInputTime = runtimeTime;
                         state.LastAnyInput = "BUTTON:" + button;
                         Write(
                             "INPUT",
-                            $"player={playerId} runtimeMsec={F(runtimeMsec)} device=BUTTON control={button} edge=UP heldMsec={F(Duration(runtimeMsec, state.ButtonDownMsec[i]))} inGamePush={B(gamePush)} rawPush={B(rawPush)} used={B(InputManager.IsUsedThisFrame(playerId, button))}");
+                            $"player={playerId} runtimeMsec={F(runtimeTime)} device=BUTTON control={button} edge=UP heldMsec={F(Duration(runtimeTime, state.ButtonDownTime[i]))} inGamePush={B(gamePush)} rawPush={B(rawPush)} used={B(InputManager.IsUsedThisFrame(playerId, button))}");
                     }
                     state.ButtonPush[i] = push;
                 }
@@ -244,22 +237,22 @@ namespace SoflanSupport
 
                     if (down || (!state.TouchPush[i] && push))
                     {
-                        state.TouchDownMsec[i] = runtimeMsec;
-                        state.TouchLastDownMsec[i] = runtimeMsec;
-                        state.LastAnyInputMsec = runtimeMsec;
+                        state.TouchDownTime[i] = runtimeTime;
+                        state.TouchLastDownTime[i] = runtimeTime;
+                        state.LastAnyInputTime = runtimeTime;
                         state.LastAnyInput = "TOUCH:" + area;
                         Write(
                             "INPUT",
-                            $"player={playerId} runtimeMsec={F(runtimeMsec)} device=TOUCH control={area} index={i} edge=DOWN inGameDown={B(gameDown)} rawDown={B(rawDown)} inGamePush={B(gamePush)} rawPush={B(rawPush)} used={B(InputManager.IsUsedThisFrame(playerId, area))} pushTime={InputManager.GetTouchPanelAreaPushTime(playerId, area)}");
+                            $"player={playerId} runtimeMsec={F(runtimeTime)} device=TOUCH control={area} index={i} edge=DOWN inGameDown={B(gameDown)} rawDown={B(rawDown)} inGamePush={B(gamePush)} rawPush={B(rawPush)} used={B(InputManager.IsUsedThisFrame(playerId, area))} pushTime={InputManager.GetTouchPanelAreaPushTime(playerId, area)}");
                     }
                     if (state.TouchPush[i] && !push)
                     {
-                        state.TouchLastUpMsec[i] = runtimeMsec;
-                        state.LastAnyInputMsec = runtimeMsec;
+                        state.TouchLastUpTime[i] = runtimeTime;
+                        state.LastAnyInputTime = runtimeTime;
                         state.LastAnyInput = "TOUCH:" + area;
                         Write(
                             "INPUT",
-                            $"player={playerId} runtimeMsec={F(runtimeMsec)} device=TOUCH control={area} index={i} edge=UP heldMsec={F(Duration(runtimeMsec, state.TouchDownMsec[i]))} inGamePush={B(gamePush)} rawPush={B(rawPush)} used={B(InputManager.IsUsedThisFrame(playerId, area))}");
+                            $"player={playerId} runtimeMsec={F(runtimeTime)} device=TOUCH control={area} index={i} edge=UP heldMsec={F(Duration(runtimeTime, state.TouchDownTime[i]))} inGamePush={B(gamePush)} rawPush={B(rawPush)} used={B(InputManager.IsUsedThisFrame(playerId, area))}");
                     }
                     state.TouchPush[i] = push;
                 }
@@ -273,11 +266,11 @@ namespace SoflanSupport
         public static void VisibilityDecision(
             int playerId,
             NoteData note,
-            float runtimeMsec,
-            float visibleMsec,
-            float normalVisibleMsec,
+            TimeSpan runtimeTime,
+            TimeSpan visibleTime,
+            TimeSpan normalVisibleTime,
             int soflanGroup,
-            float currentSoflanTime,
+            SoflanPosition currentSoflanPosition,
             bool soflanVisible,
             bool visible)
         {
@@ -288,25 +281,28 @@ namespace SoflanSupport
             {
                 var noteState = GetOrCreateNote(state, note.indexNote);
                 var changed = !noteState.VisibilityKnown || noteState.Visible != visible;
-                var near = Math.Abs(runtimeMsec - note.time.msec) <= NearNoteMsec;
-                var heartbeat = near && Elapsed(runtimeMsec, noteState.LastVisibilityLogMsec) >= HeartbeatMsec;
+                var runtimeNoteTime = SoflanRuntimeTime.FromGameMsecBoundary(note.time.msec);
+                var near = DurationAbsolute(runtimeTime - runtimeNoteTime) <= NearNoteTime;
+                var heartbeat = near
+                    && Elapsed(runtimeTime, noteState.LastVisibilityLogTime) >= HeartbeatTime;
                 if (!changed && !heartbeat)
                     return;
 
                 noteState.VisibilityKnown = true;
                 noteState.Visible = visible;
-                noteState.LastVisibilityLogMsec = runtimeMsec;
+                noteState.LastVisibilityLogTime = runtimeTime;
 
                 var manager = Singleton<SoflanManager>.Instance;
-                var rawCurrentMsec = RawCurrent(state, runtimeMsec);
-                var rawNoteMsec = manager.getNoteAudioMsecForSoflan(playerId, note);
-                var noteSoflanTime = manager.ConvertAudioTimeToY_PreviewMode(
+                var rawCurrentTime = RawCurrent(state, runtimeTime);
+                var rawNoteTime = manager.GetNoteAudioTimeForSoflan(playerId, note);
+                var noteSoflanPosition = manager.GetNoteSoflanPosition(
                     playerId,
-                    rawNoteMsec,
+                    note.indexNote,
+                    runtimeNoteTime,
                     soflanGroup);
                 Write(
                     "VISIBILITY",
-                    $"player={playerId} note={note.indexNote} kind={note.type.getEnum()} lane={note.startButtonPos} runtimeMsec={F(runtimeMsec)} rawCurrentMsec={F(rawCurrentMsec)} runtimeNoteMsec={F(note.time.msec)} rawNoteMsec={F(rawNoteMsec)} visibleMsec={F(visibleMsec)} normalVisibleMsec={F(normalVisibleMsec)} normalDue={B(SoflanVisibilityPolicy.IsNormallyDue(runtimeMsec, note.time.msec, normalVisibleMsec))} soflanVisible={B(soflanVisible)} group={soflanGroup} speed={D(manager.GetCurrentSpeed(playerId, soflanGroup, runtimeMsec))} currentSoflan={F(currentSoflanTime)} noteSoflan={F(noteSoflanTime)} soflanDiff={F(noteSoflanTime - currentSoflanTime)} decision={(visible ? "VISIBLE" : "BLOCKED")}");
+                    $"player={playerId} note={note.indexNote} kind={note.type.getEnum()} lane={note.startButtonPos} runtimeMsec={F(runtimeTime)} rawCurrentMsec={F(rawCurrentTime)} runtimeNoteMsec={F(runtimeNoteTime)} rawNoteMsec={F(rawNoteTime)} visibleMsec={F(visibleTime)} normalVisibleMsec={F(normalVisibleTime)} normalDue={B(SoflanVisibilityPolicy.IsNormallyDue(runtimeTime, runtimeNoteTime, normalVisibleTime))} soflanVisible={B(soflanVisible)} group={soflanGroup} speed={D(manager.GetCurrentSpeed(playerId, soflanGroup, runtimeTime))} currentSoflan={D(currentSoflanPosition.Value)} noteSoflan={D(noteSoflanPosition.Value)} soflanDiff={D(noteSoflanPosition.DeltaTo(currentSoflanPosition))} decision={(visible ? "VISIBLE" : "BLOCKED")}");
             }
             catch (Exception ex)
             {
@@ -317,8 +313,8 @@ namespace SoflanSupport
         public static void VisibilityFallback(
             int playerId,
             NoteData note,
-            float runtimeMsec,
-            float visibleMsec)
+            TimeSpan runtimeTime,
+            TimeSpan visibleTime)
         {
             if (note == null || !TryGetActivePlayer(playerId, out var state))
                 return;
@@ -331,11 +327,38 @@ namespace SoflanSupport
                 noteState.VisibilityFallbackLogged = true;
                 Write(
                     "VISIBILITY_FALLBACK",
-                    $"player={playerId} note={note.indexNote} kind={note.type.getEnum()} lane={note.startButtonPos} runtimeMsec={F(runtimeMsec)} runtimeNoteMsec={F(note.time.msec)} visibleMsec={F(visibleMsec)} reason=unsupported_visual_kind");
+                    $"player={playerId} note={note.indexNote} kind={note.type.getEnum()} lane={note.startButtonPos} runtimeMsec={F(runtimeTime)} runtimeNoteMsec={F(SoflanRuntimeTime.FromGameMsecBoundary(note.time.msec))} visibleMsec={F(visibleTime)} reason=unsupported_visual_kind");
             }
             catch (Exception ex)
             {
                 ErrorOnce(playerId, "VisibilityFallback", ex);
+            }
+        }
+
+        public static void VisibilityTGridFallback(
+            int playerId,
+            NoteData note,
+            TimeSpan runtimeTime,
+            TimeSpan visibleTime,
+            long fallbackCount,
+            string reason)
+        {
+            if (note == null || !TryGetActivePlayer(playerId, out var state))
+                return;
+
+            try
+            {
+                var noteState = GetOrCreateNote(state, note.indexNote);
+                if (noteState.VisibilityTGridFallbackLogged)
+                    return;
+                noteState.VisibilityTGridFallbackLogged = true;
+                Write(
+                    "VISIBILITY_TGRID_FALLBACK",
+                    $"player={playerId} note={note.indexNote} kind={note.type.getEnum()} lane={note.startButtonPos} runtimeMsec={F(runtimeTime)} runtimeNoteMsec={F(SoflanRuntimeTime.FromGameMsecBoundary(note.time.msec))} visibleMsec={F(visibleTime)} fallbackCount={fallbackCount} reason={reason}");
+            }
+            catch (Exception ex)
+            {
+                ErrorOnce(playerId, "VisibilityTGridFallback", ex);
             }
         }
 
@@ -346,17 +369,17 @@ namespace SoflanSupport
 
             try
             {
-                var runtimeMsec = NotesManager.GetCurrentMsec();
+                var runtimeTime = SoflanGameClock.CurrentTime;
                 var noteState = GetOrCreateNote(state, note.indexNote);
                 if (noteState.RegisterAttemptLogged
-                    && Elapsed(runtimeMsec, noteState.LastRegisterAttemptMsec) < HeartbeatMsec)
+                    && Elapsed(runtimeTime, noteState.LastRegisterAttemptTime) < HeartbeatTime)
                     return;
 
                 noteState.RegisterAttemptLogged = true;
-                noteState.LastRegisterAttemptMsec = runtimeMsec;
+                noteState.LastRegisterAttemptTime = runtimeTime;
                 Write(
                     "REGISTER_ATTEMPT",
-                    $"player={playerId} note={note.indexNote} kind={note.type.getEnum()} lane={note.startButtonPos} runtimeMsec={F(runtimeMsec)} runtimeNoteMsec={F(note.time.msec)} runtimeEndMsec={F(note.end.msec)} isUsed={B(note.isUsed)} source={source}");
+                    $"player={playerId} note={note.indexNote} kind={note.type.getEnum()} lane={note.startButtonPos} runtimeMsec={F(runtimeTime)} runtimeNoteMsec={F(SoflanRuntimeTime.FromGameMsecBoundary(note.time.msec))} runtimeEndMsec={F(SoflanRuntimeTime.FromGameMsecBoundary(note.end.msec))} isUsed={B(note.isUsed)} source={source}");
             }
             catch (Exception ex)
             {
@@ -371,19 +394,19 @@ namespace SoflanSupport
 
             try
             {
-                var runtimeMsec = NotesManager.GetCurrentMsec();
+                var runtimeTime = SoflanGameClock.CurrentTime;
                 var noteState = GetOrCreateNote(state, note.indexNote);
                 var changed = !noteState.RegisterKnown || noteState.Registered != registered;
                 if (!registered && !changed
-                    && Elapsed(runtimeMsec, noteState.LastRegisterResultMsec) < HeartbeatMsec)
+                    && Elapsed(runtimeTime, noteState.LastRegisterResultTime) < HeartbeatTime)
                     return;
 
                 noteState.RegisterKnown = true;
                 noteState.Registered = registered;
-                noteState.LastRegisterResultMsec = runtimeMsec;
+                noteState.LastRegisterResultTime = runtimeTime;
                 Write(
                     "REGISTER_RESULT",
-                    $"player={playerId} note={note.indexNote} kind={note.type.getEnum()} lane={note.startButtonPos} runtimeMsec={F(runtimeMsec)} runtimeNoteMsec={F(note.time.msec)} result={(registered ? "SUCCESS" : "FAILED")} source={source}");
+                    $"player={playerId} note={note.indexNote} kind={note.type.getEnum()} lane={note.startButtonPos} runtimeMsec={F(runtimeTime)} runtimeNoteMsec={F(SoflanRuntimeTime.FromGameMsecBoundary(note.time.msec))} result={(registered ? "SUCCESS" : "FAILED")} source={source}");
             }
             catch (Exception ex)
             {
@@ -398,10 +421,11 @@ namespace SoflanSupport
 
             try
             {
-                var runtimeMsec = NotesManager.GetCurrentMsec();
+                var runtimeTime = SoflanGameClock.CurrentTime;
+                var runtimeEndTime = SoflanRuntimeTime.FromGameMsecBoundary(note.end.msec);
                 Write(
                     "SKIP_REGISTER",
-                    $"player={playerId} note={note.indexNote} kind={note.type.getEnum()} lane={note.startButtonPos} runtimeMsec={F(runtimeMsec)} runtimeNoteMsec={F(note.time.msec)} runtimeEndMsec={F(note.end.msec)} deltaFromEndMsec={F(runtimeMsec - note.end.msec)} forcedResult={(skipped ? "TooLate" : "NONE")}");
+                    $"player={playerId} note={note.indexNote} kind={note.type.getEnum()} lane={note.startButtonPos} runtimeMsec={F(runtimeTime)} runtimeNoteMsec={F(SoflanRuntimeTime.FromGameMsecBoundary(note.time.msec))} runtimeEndMsec={F(runtimeEndTime)} deltaFromEndMsec={F(runtimeTime - runtimeEndTime)} forcedResult={(skipped ? "TooLate" : "NONE")}");
             }
             catch (Exception ex)
             {
@@ -412,14 +436,14 @@ namespace SoflanSupport
         public static void ObjectInitialized(
             int playerId,
             NoteData note,
-            float appearMsec,
-            float tailMsec,
-            float defaultMsec,
+            TimeSpan appearTime,
+            TimeSpan tailTime,
+            TimeSpan defaultTime,
             int soflanGroup,
             bool fixedSoflan,
             float fixedSpeed,
-            float noteSoflanTime,
-            float maiBugAdjustMsec,
+            SoflanPosition noteSoflanPosition,
+            TimeSpan maiBugAdjust,
             string source)
         {
             if (note == null || !TryGetActivePlayer(playerId, out var state))
@@ -431,10 +455,10 @@ namespace SoflanSupport
                 if (noteState.ObjectInitialized)
                     return;
                 noteState.ObjectInitialized = true;
-                var runtimeMsec = NotesManager.GetCurrentMsec();
+                var runtimeTime = SoflanGameClock.CurrentTime;
                 Write(
                     "OBJECT_INITIALIZE",
-                    $"player={playerId} note={note.indexNote} kind={note.type.getEnum()} lane={note.startButtonPos} touchArea={note.touchArea} runtimeMsec={F(runtimeMsec)} appearMsec={F(appearMsec)} tailMsec={F(tailMsec)} defaultMsec={F(defaultMsec)} group={soflanGroup} fixed={B(fixedSoflan)} fixedSpeed={F(fixedSpeed)} noteSoflan={F(noteSoflanTime)} maiBugAdjustMsec={F(maiBugAdjustMsec)} source={source}");
+                    $"player={playerId} note={note.indexNote} kind={note.type.getEnum()} lane={note.startButtonPos} touchArea={note.touchArea} runtimeMsec={F(runtimeTime)} appearMsec={F(appearTime)} tailMsec={F(tailTime)} defaultMsec={F(defaultTime)} group={soflanGroup} fixed={B(fixedSoflan)} fixedSpeed={F(fixedSpeed)} noteSoflan={D(noteSoflanPosition.Value)} maiBugAdjustMsec={F(maiBugAdjust)} source={source}");
             }
             catch (Exception ex)
             {
@@ -449,16 +473,16 @@ namespace SoflanSupport
             int lane,
             int touchAreaIndex,
             bool includeButton,
-            float appearMsec,
-            float tailMsec,
+            TimeSpan appearTime,
+            TimeSpan tailTime,
             NoteJudge.EJudgeType judgeType,
-            float judgeStartMsec,
-            float judgeEndMsec,
+            TimeSpan judgeStart,
+            TimeSpan judgeEnd,
             NoteJudge.ETiming result,
             NoteJudge.ETiming headResult,
             bool endFlag,
             bool isJudgeNote,
-            float judgeTimingDiffMsec,
+            TimeSpan judgeTimingDiff,
             string source)
         {
             var probe = new JudgeProbe();
@@ -467,25 +491,25 @@ namespace SoflanSupport
 
             try
             {
-                var runtimeMsec = NotesManager.GetCurrentMsec();
+                var runtimeTime = SoflanGameClock.CurrentTime;
                 var timingFrame = Singleton<GamePlayManager>.Instance
                     .GetGameScore(playerId)
                     .UserOption
                     .GetJudgeTimingFrame();
-                var timingOffset = timingFrame * 16.666666f;
-                var windowStart = appearMsec + judgeStartMsec + timingOffset;
-                var windowEnd = appearMsec + judgeEndMsec + timingOffset;
+                var timingOffset = SoflanRuntimeTime.FromMilliseconds(timingFrame * 16.666666d);
+                var windowStart = appearTime + judgeStart + timingOffset;
+                var windowEnd = appearTime + judgeEnd + timingOffset;
                 var noteState = GetOrCreateNote(state, noteIndex);
 
-                if (!noteState.JudgeWindowOpenLogged && runtimeMsec >= windowStart)
+                if (!noteState.JudgeWindowOpenLogged && runtimeTime >= windowStart)
                 {
                     noteState.JudgeWindowOpenLogged = true;
                     Write(
                         "JUDGE_WINDOW_OPEN",
-                        $"player={playerId} note={noteIndex} kind={kind} lane={lane} runtimeMsec={F(runtimeMsec)} appearMsec={F(appearMsec)} tailMsec={F(tailMsec)} windowStartMsec={F(windowStart)} windowEndMsec={F(windowEnd)} judgeType={judgeType} timingFrame={F(timingFrame)} source={source}");
+                        $"player={playerId} note={noteIndex} kind={kind} lane={lane} runtimeMsec={F(runtimeTime)} appearMsec={F(appearTime)} tailMsec={F(tailTime)} windowStartMsec={F(windowStart)} windowEndMsec={F(windowEnd)} judgeType={judgeType} timingFrame={F(timingFrame)} source={source}");
                 }
                 if (!noteState.JudgeDeadlineLogged
-                    && runtimeMsec > windowEnd
+                    && runtimeTime > windowEnd
                     && result == NoteJudge.ETiming.End
                     && headResult == NoteJudge.ETiming.End
                     && !endFlag)
@@ -493,7 +517,7 @@ namespace SoflanSupport
                     noteState.JudgeDeadlineLogged = true;
                     Write(
                         "JUDGE_DEADLINE",
-                        $"player={playerId} note={noteIndex} kind={kind} lane={lane} runtimeMsec={F(runtimeMsec)} windowEndMsec={F(windowEnd)} overdueMsec={F(runtimeMsec - windowEnd)} source={source}");
+                        $"player={playerId} note={noteIndex} kind={kind} lane={lane} runtimeMsec={F(runtimeTime)} windowEndMsec={F(windowEnd)} overdueMsec={F(runtimeTime - windowEnd)} source={source}");
                 }
 
                 ReadRelevantInput(
@@ -514,7 +538,7 @@ namespace SoflanSupport
                 var observedDown = engineDown || buttonRawDown || touchRawDown;
                 if (observedDown)
                 {
-                    var inWindow = runtimeMsec >= windowStart && runtimeMsec <= windowEnd;
+                    var inWindow = runtimeTime >= windowStart && runtimeTime <= windowEnd;
                     var candidate = !GameManager.IsAutoPlay()
                         && engineDown
                         && inWindow
@@ -524,14 +548,14 @@ namespace SoflanSupport
                         && headResult == NoteJudge.ETiming.End;
                     Write(
                         "JUDGE_ATTEMPT",
-                        $"player={playerId} note={noteIndex} kind={kind} lane={lane} touchIndex={touchAreaIndex} runtimeMsec={F(runtimeMsec)} deltaFromHeadMsec={F(runtimeMsec - appearMsec)} engineDown={B(engineDown)} buttonGameDown={B(buttonGameDown)} buttonRawDown={B(buttonRawDown)} buttonGamePush={B(buttonGamePush)} buttonRawPush={B(buttonRawPush)} touchGameDown={B(touchGameDown)} touchRawDown={B(touchRawDown)} touchGamePush={B(touchGamePush)} touchRawPush={B(touchRawPush)} used={B(used)} isJudgeNote={B(isJudgeNote)} inWindow={B(inWindow)} candidate={B(candidate)} resultBefore={result} headResultBefore={headResult} judgeDiffBefore={F(judgeTimingDiffMsec)} source={source}");
+                        $"player={playerId} note={noteIndex} kind={kind} lane={lane} touchIndex={touchAreaIndex} runtimeMsec={F(runtimeTime)} deltaFromHeadMsec={F(runtimeTime - appearTime)} engineDown={B(engineDown)} buttonGameDown={B(buttonGameDown)} buttonRawDown={B(buttonRawDown)} buttonGamePush={B(buttonGamePush)} buttonRawPush={B(buttonRawPush)} touchGameDown={B(touchGameDown)} touchRawDown={B(touchRawDown)} touchGamePush={B(touchGamePush)} touchRawPush={B(touchRawPush)} used={B(used)} isJudgeNote={B(isJudgeNote)} inWindow={B(inWindow)} candidate={B(candidate)} resultBefore={result} headResultBefore={headResult} judgeDiffBefore={F(judgeTimingDiff)} source={source}");
                 }
 
                 probe.Active = true;
                 probe.PlayerId = playerId;
                 probe.NoteIndex = noteIndex;
                 probe.Source = source;
-                probe.RuntimeMsec = runtimeMsec;
+                probe.RuntimeTime = runtimeTime;
                 probe.Result = result;
                 probe.HeadResult = headResult;
                 probe.EndFlag = endFlag;
@@ -548,31 +572,31 @@ namespace SoflanSupport
             NoteJudge.ETiming result,
             NoteJudge.ETiming headResult,
             bool endFlag,
-            float judgeTimingDiffMsec)
+            TimeSpan judgeTimingDiff)
         {
             if (!probe.Active)
                 return;
 
             try
             {
-                var runtimeMsec = NotesManager.GetCurrentMsec();
+                var runtimeTime = SoflanGameClock.CurrentTime;
                 if (headResult != probe.HeadResult)
                 {
                     Write(
                         "JUDGE_RESULT",
-                        $"player={probe.PlayerId} note={probe.NoteIndex} phase=HEAD runtimeMsec={F(runtimeMsec)} resultBefore={probe.HeadResult} resultAfter={headResult} judgeBox={NoteJudge.ConvertJudge(headResult)} judgeDiffMsec={F(judgeTimingDiffMsec)} source={probe.Source}");
+                        $"player={probe.PlayerId} note={probe.NoteIndex} phase=HEAD runtimeMsec={F(runtimeTime)} resultBefore={probe.HeadResult} resultAfter={headResult} judgeBox={NoteJudge.ConvertJudge(headResult)} judgeDiffMsec={F(judgeTimingDiff)} source={probe.Source}");
                 }
                 if (result != probe.Result)
                 {
                     Write(
                         "JUDGE_RESULT",
-                        $"player={probe.PlayerId} note={probe.NoteIndex} phase=FINAL runtimeMsec={F(runtimeMsec)} resultBefore={probe.Result} resultAfter={result} judgeBox={NoteJudge.ConvertJudge(result)} judgeDiffMsec={F(judgeTimingDiffMsec)} source={probe.Source}");
+                        $"player={probe.PlayerId} note={probe.NoteIndex} phase=FINAL runtimeMsec={F(runtimeTime)} resultBefore={probe.Result} resultAfter={result} judgeBox={NoteJudge.ConvertJudge(result)} judgeDiffMsec={F(judgeTimingDiff)} source={probe.Source}");
                 }
                 if (!probe.EndFlag && endFlag)
                 {
                     Write(
                         "OBJECT_END",
-                        $"player={probe.PlayerId} note={probe.NoteIndex} runtimeMsec={F(runtimeMsec)} result={result} headResult={headResult} judgeDiffMsec={F(judgeTimingDiffMsec)} source={probe.Source}");
+                        $"player={probe.PlayerId} note={probe.NoteIndex} runtimeMsec={F(runtimeTime)} result={result} headResult={headResult} judgeDiffMsec={F(judgeTimingDiff)} source={probe.Source}");
                 }
             }
             catch (Exception ex)
@@ -589,7 +613,7 @@ namespace SoflanSupport
             bool bodyOn,
             bool pressed,
             bool trigger,
-            double releaseMsec,
+            TimeSpan releaseTime,
             bool endFlag,
             string source)
         {
@@ -598,7 +622,7 @@ namespace SoflanSupport
 
             try
             {
-                var runtimeMsec = NotesManager.GetCurrentMsec();
+                var runtimeTime = SoflanGameClock.CurrentTime;
                 var noteState = GetOrCreateNote(state, noteIndex);
                 var changed = !noteState.HoldKnown
                     || noteState.HoldHeadResult != headResult
@@ -608,7 +632,7 @@ namespace SoflanSupport
                     || noteState.HoldTrigger != trigger;
                 var heartbeat = headJudged
                     && !endFlag
-                    && Elapsed(runtimeMsec, noteState.LastHoldLogMsec) >= 500f;
+                    && Elapsed(runtimeTime, noteState.LastHoldLogTime) >= HoldHeartbeatTime;
                 if (!changed && !heartbeat)
                     return;
 
@@ -618,10 +642,10 @@ namespace SoflanSupport
                 noteState.HoldBodyOn = bodyOn;
                 noteState.HoldPressed = pressed;
                 noteState.HoldTrigger = trigger;
-                noteState.LastHoldLogMsec = runtimeMsec;
+                noteState.LastHoldLogTime = runtimeTime;
                 Write(
                     "HOLD_STATE",
-                    $"player={playerId} note={noteIndex} runtimeMsec={F(runtimeMsec)} headResult={headResult} headJudged={B(headJudged)} bodyOn={B(bodyOn)} pressed={B(pressed)} trigger={B(trigger)} releaseMsec={D(releaseMsec)} end={B(endFlag)} source={source}");
+                    $"player={playerId} note={noteIndex} runtimeMsec={F(runtimeTime)} headResult={headResult} headJudged={B(headJudged)} bodyOn={B(bodyOn)} pressed={B(pressed)} trigger={B(trigger)} releaseMsec={F(releaseTime)} end={B(endFlag)} source={source}");
             }
             catch (Exception ex)
             {
@@ -634,13 +658,13 @@ namespace SoflanSupport
             int noteIndex,
             NotesTypeID.Def kind,
             int soflanGroup,
-            float runtimeMsec,
-            float currentSoflanTime,
-            float noteSoflanTime,
-            float diffTime,
+            TimeSpan runtimeTime,
+            SoflanPosition currentSoflanPosition,
+            SoflanPosition noteSoflanPosition,
+            double diff,
             float visualValue,
-            float scaleStartTime,
-            float moveStartTime,
+            double scaleStartDistance,
+            double moveStartDistance,
             int status,
             bool fixedSoflan,
             string source)
@@ -651,23 +675,24 @@ namespace SoflanSupport
             try
             {
                 var noteState = GetOrCreateNote(state, noteIndex);
-                var visualStatus = status * 2 + (diffTime >= 0f ? 0 : 1);
+                var visualStatus = status * 2 + (diff >= 0d ? 0 : 1);
                 var crossed = noteState.VisualKnown
-                    && !float.IsNaN(noteState.LastVisualDiff)
-                    && ((noteState.LastVisualDiff > 0f && diffTime <= 0f)
-                        || (noteState.LastVisualDiff < 0f && diffTime >= 0f));
+                    && noteState.LastVisualDiff.HasValue
+                    && ((noteState.LastVisualDiff.Value > 0d && diff <= 0d)
+                        || (noteState.LastVisualDiff.Value < 0d && diff >= 0d));
                 var changed = !noteState.VisualKnown || noteState.VisualStatus != visualStatus;
-                var near = Math.Abs(diffTime) <= Math.Max(scaleStartTime, 1000f);
-                var heartbeat = near && Elapsed(runtimeMsec, noteState.LastVisualLogMsec) >= HeartbeatMsec;
-                noteState.LastVisualDiff = diffTime;
+                var near = Math.Abs(diff) <= Math.Max(scaleStartDistance, 1000d);
+                var heartbeat = near
+                    && Elapsed(runtimeTime, noteState.LastVisualLogTime) >= HeartbeatTime;
+                noteState.LastVisualDiff = diff;
                 if (!changed && !crossed && !heartbeat)
                     return;
 
                 noteState.VisualKnown = true;
                 noteState.VisualStatus = visualStatus;
-                noteState.LastVisualLogMsec = runtimeMsec;
+                noteState.LastVisualLogTime = runtimeTime;
                 var manager = Singleton<SoflanManager>.Instance;
-                var fields = $"player={playerId} note={noteIndex} kind={kind} runtimeMsec={F(runtimeMsec)} rawCurrentMsec={F(RawCurrent(state, runtimeMsec))} group={soflanGroup} speed={D(manager.GetCurrentSpeed(playerId, soflanGroup, runtimeMsec))} currentSoflan={F(currentSoflanTime)} noteSoflan={F(noteSoflanTime)} diff={F(diffTime)} visualValue={F(visualValue)} scaleStart={F(scaleStartTime)} moveStart={F(moveStartTime)} status={VisualStatusName(status)} direction={(diffTime >= 0f ? "BEFORE" : "AFTER")} fixed={B(fixedSoflan)} source={source}";
+                var fields = $"player={playerId} note={noteIndex} kind={kind} runtimeMsec={F(runtimeTime)} rawCurrentMsec={F(RawCurrent(state, runtimeTime))} group={soflanGroup} speed={D(manager.GetCurrentSpeed(playerId, soflanGroup, runtimeTime))} currentSoflan={D(currentSoflanPosition.Value)} noteSoflan={D(noteSoflanPosition.Value)} diff={D(diff)} visualValue={F(visualValue)} scaleStart={D(scaleStartDistance)} moveStart={D(moveStartDistance)} status={VisualStatusName(status)} direction={(diff >= 0d ? "BEFORE" : "AFTER")} fixed={B(fixedSoflan)} source={source}";
                 if (crossed)
                     Write("VISUAL_CROSS", fields);
                 Write("VISUAL_STATE", fields);
@@ -686,11 +711,11 @@ namespace SoflanSupport
             int hitCount,
             bool hitIn,
             int subIndex,
-            float tailMsec,
-            float lastWaitMsec,
+            TimeSpan tailTime,
+            TimeSpan lastWaitTime,
             NoteJudge.ETiming result,
             bool endFlag,
-            float judgeTimingDiffMsec,
+            TimeSpan judgeTimingDiff,
             string detail,
             string source)
         {
@@ -699,7 +724,7 @@ namespace SoflanSupport
 
             try
             {
-                var runtimeMsec = NotesManager.GetCurrentMsec();
+                var runtimeTime = SoflanGameClock.CurrentTime;
                 var noteState = GetOrCreateNote(state, noteIndex);
                 var changed = !noteState.SlideKnown
                     || noteState.SlideHitIndex != hitIndex
@@ -709,8 +734,9 @@ namespace SoflanSupport
                     || noteState.SlideDetail != (detail ?? string.Empty)
                     || noteState.SlideResult != result
                     || noteState.SlideEndFlag != endFlag;
-                var near = Math.Abs(runtimeMsec - tailMsec) <= NearNoteMsec;
-                var heartbeat = near && Elapsed(runtimeMsec, noteState.LastSlideLogMsec) >= HeartbeatMsec;
+                var near = DurationAbsolute(runtimeTime - tailTime) <= NearNoteTime;
+                var heartbeat = near
+                    && Elapsed(runtimeTime, noteState.LastSlideLogTime) >= HeartbeatTime;
                 if (!changed && !heartbeat)
                     return;
 
@@ -722,10 +748,10 @@ namespace SoflanSupport
                 noteState.SlideDetail = detail ?? string.Empty;
                 noteState.SlideResult = result;
                 noteState.SlideEndFlag = endFlag;
-                noteState.LastSlideLogMsec = runtimeMsec;
+                noteState.LastSlideLogTime = runtimeTime;
                 Write(
                     "SLIDE_PROGRESS",
-                    $"player={playerId} note={noteIndex} kind={kind} runtimeMsec={F(runtimeMsec)} tailMsec={F(tailMsec)} hitIndex={hitIndex} hitCount={hitCount} hitIn={B(hitIn)} subIndex={subIndex} lastWaitMsec={F(lastWaitMsec)} result={result} end={B(endFlag)} judgeDiffMsec={F(judgeTimingDiffMsec)} detail={Q(noteState.SlideDetail)} source={source}");
+                    $"player={playerId} note={noteIndex} kind={kind} runtimeMsec={F(runtimeTime)} tailMsec={F(tailTime)} hitIndex={hitIndex} hitCount={hitCount} hitIn={B(hitIn)} subIndex={subIndex} lastWaitMsec={F(lastWaitTime)} result={result} end={B(endFlag)} judgeDiffMsec={F(judgeTimingDiff)} detail={Q(noteState.SlideDetail)} source={source}");
             }
             catch (Exception ex)
             {
@@ -761,14 +787,14 @@ namespace SoflanSupport
 
             try
             {
-                var runtimeMsec = NotesManager.GetCurrentMsec();
+                var runtimeTime = SoflanGameClock.CurrentTime;
                 var hasNote = TryGetRuntimeNote(playerId, noteIndex, out var note);
                 var isJudged = hasNote && note.isJudged;
                 var accepted = !wasJudged && isJudged;
                 var effectiveTiming = trackSkip ? NoteJudge.ETiming.TooLate : requestedTiming;
                 Write(
                     "SCORE_RESULT",
-                    $"player={playerId} note={noteIndex} scoreType={scoreType} runtimeMsec={F(runtimeMsec)} requested={requestedTiming} effective={effectiveTiming} wasJudged={B(wasJudged)} isJudged={B(isJudged)} accepted={B(accepted)} trackSkip={B(trackSkip)}");
+                    $"player={playerId} note={noteIndex} scoreType={scoreType} runtimeMsec={F(runtimeTime)} requested={requestedTiming} effective={effectiveTiming} wasJudged={B(wasJudged)} isJudged={B(isJudged)} accepted={B(accepted)} trackSkip={B(trackSkip)}");
 
                 if (!accepted || (effectiveTiming != NoteJudge.ETiming.TooFast
                     && effectiveTiming != NoteJudge.ETiming.TooLate))
@@ -784,35 +810,37 @@ namespace SoflanSupport
                     touchAreaIndex = lane >= 0 && lane < 8 ? lane : -1;
                 var manager = Singleton<SoflanManager>.Instance;
                 var group = manager.getNoteSoflanGroup(playerId, noteIndex);
-                var runtimeNoteMsec = hasNote ? note.time.msec : float.NaN;
-                var rawNoteMsec = hasNote
-                    ? manager.getNoteAudioMsecForSoflan(playerId, note)
-                    : float.NaN;
-                var rawCurrentMsec = RawCurrent(state, runtimeMsec);
+                var runtimeNoteTime = hasNote
+                    ? (TimeSpan?)SoflanRuntimeTime.FromGameMsecBoundary(note.time.msec)
+                    : null;
+                var rawNoteTime = hasNote
+                    ? (TimeSpan?)manager.GetNoteAudioTimeForSoflan(playerId, note)
+                    : null;
+                var rawCurrentTime = RawCurrent(state, runtimeTime);
                 var lastButtonDown = lane >= 0 && lane < 8
-                    ? state.ButtonLastDownMsec[lane]
-                    : float.NaN;
+                    ? state.ButtonLastDownTime[lane]
+                    : null;
                 var lastButtonUp = lane >= 0 && lane < 8
-                    ? state.ButtonLastUpMsec[lane]
-                    : float.NaN;
+                    ? state.ButtonLastUpTime[lane]
+                    : null;
                 var lastTouchDown = touchAreaIndex >= 0 && touchAreaIndex < 34
-                    ? state.TouchLastDownMsec[touchAreaIndex]
-                    : float.NaN;
+                    ? state.TouchLastDownTime[touchAreaIndex]
+                    : null;
                 var lastTouchUp = touchAreaIndex >= 0 && touchAreaIndex < 34
-                    ? state.TouchLastUpMsec[touchAreaIndex]
-                    : float.NaN;
+                    ? state.TouchLastUpTime[touchAreaIndex]
+                    : null;
                 if (touchAreaIndex == 16 || touchAreaIndex == 17)
                 {
                     lastTouchDown = Latest(
-                        state.TouchLastDownMsec[16],
-                        state.TouchLastDownMsec[17]);
+                        state.TouchLastDownTime[16],
+                        state.TouchLastDownTime[17]);
                     lastTouchUp = Latest(
-                        state.TouchLastUpMsec[16],
-                        state.TouchLastUpMsec[17]);
+                        state.TouchLastUpTime[16],
+                        state.TouchLastUpTime[17]);
                 }
                 Write(
                     "MISS",
-                    $"player={playerId} note={noteIndex} kind={kind} scoreType={scoreType} lane={lane} touchIndex={touchAreaIndex} result={effectiveTiming} runtimeMsec={F(runtimeMsec)} rawCurrentMsec={F(rawCurrentMsec)} runtimeNoteMsec={F(runtimeNoteMsec)} rawNoteMsec={F(rawNoteMsec)} runtimeDeltaMsec={F(runtimeMsec - runtimeNoteMsec)} rawDeltaMsec={F(rawCurrentMsec - rawNoteMsec)} group={group} speed={D(manager.GetCurrentSpeed(playerId, group, runtimeMsec))} visibilityKnown={B(noteState.VisibilityKnown)} lastVisible={B(noteState.Visible)} lastVisibilityLogMsec={F(noteState.LastVisibilityLogMsec)} registerKnown={B(noteState.RegisterKnown)} registered={B(noteState.Registered)} lastRegisterMsec={F(noteState.LastRegisterResultMsec)} objectInitialized={B(noteState.ObjectInitialized)} lastButtonDownMsec={F(lastButtonDown)} lastButtonUpMsec={F(lastButtonUp)} lastTouchDownMsec={F(lastTouchDown)} lastTouchUpMsec={F(lastTouchUp)} lastAnyInput={Q(state.LastAnyInput)} lastAnyInputMsec={F(state.LastAnyInputMsec)}");
+                    $"player={playerId} note={noteIndex} kind={kind} scoreType={scoreType} lane={lane} touchIndex={touchAreaIndex} result={effectiveTiming} runtimeMsec={F(runtimeTime)} rawCurrentMsec={F(rawCurrentTime)} runtimeNoteMsec={F(runtimeNoteTime)} rawNoteMsec={F(rawNoteTime)} runtimeDeltaMsec={F(Difference(runtimeTime, runtimeNoteTime))} rawDeltaMsec={F(Difference(rawCurrentTime, rawNoteTime))} group={group} speed={D(manager.GetCurrentSpeed(playerId, group, runtimeTime))} visibilityKnown={B(noteState.VisibilityKnown)} lastVisible={B(noteState.Visible)} lastVisibilityLogMsec={F(noteState.LastVisibilityLogTime)} registerKnown={B(noteState.RegisterKnown)} registered={B(noteState.Registered)} lastRegisterMsec={F(noteState.LastRegisterResultTime)} objectInitialized={B(noteState.ObjectInitialized)} lastButtonDownMsec={F(lastButtonDown)} lastButtonUpMsec={F(lastButtonUp)} lastTouchDownMsec={F(lastTouchDown)} lastTouchUpMsec={F(lastTouchUp)} lastAnyInput={Q(state.LastAnyInput)} lastAnyInputMsec={F(state.LastAnyInputTime)}");
             }
             catch (Exception ex)
             {
@@ -944,37 +972,41 @@ namespace SoflanSupport
             return noteState;
         }
 
-        private static float RawCurrent(PlayerState state, float runtimeMsec)
+        private static TimeSpan RawCurrent(PlayerState state, TimeSpan runtimeTime)
         {
-            return SoflanRuntimeTime.ToRawChartAudioMsec(
-                runtimeMsec,
-                state.RuntimeChartOffsetMsec,
-                0f);
+            return SoflanRuntimeTime.ToRawChartAudioTime(
+                runtimeTime,
+                state.RuntimeChartOffset,
+                TimeSpan.Zero);
         }
 
-        private static float Duration(float now, float start)
+        private static TimeSpan? Duration(TimeSpan now, TimeSpan? start)
         {
-            return float.IsNaN(start) ? float.NaN : now - start;
+            return start.HasValue ? now - start.Value : (TimeSpan?)null;
         }
 
-        private static float Latest(float first, float second)
+        private static TimeSpan? Latest(TimeSpan? first, TimeSpan? second)
         {
-            if (float.IsNaN(first))
+            if (!first.HasValue)
                 return second;
-            if (float.IsNaN(second))
+            if (!second.HasValue)
                 return first;
-            return Math.Max(first, second);
+            return first.Value >= second.Value ? first : second;
         }
 
-        private static float Elapsed(float now, float previous)
+        private static TimeSpan Elapsed(TimeSpan now, TimeSpan? previous)
         {
-            return float.IsNaN(previous) ? float.PositiveInfinity : now - previous;
+            return previous.HasValue ? now - previous.Value : TimeSpan.MaxValue;
         }
 
-        private static void FillNaN(float[] values)
+        private static TimeSpan DurationAbsolute(TimeSpan value)
         {
-            for (var i = 0; i < values.Length; i++)
-                values[i] = float.NaN;
+            return value < TimeSpan.Zero ? value.Negate() : value;
+        }
+
+        private static TimeSpan? Difference(TimeSpan value, TimeSpan? other)
+        {
+            return other.HasValue ? value - other.Value : (TimeSpan?)null;
         }
 
         private static string VisualStatusName(int status)
@@ -1020,6 +1052,16 @@ namespace SoflanSupport
             return float.IsNaN(value)
                 ? "NaN"
                 : value.ToString("0.###", CultureInfo.InvariantCulture);
+        }
+
+        private static string F(TimeSpan value)
+        {
+            return value.TotalMilliseconds.ToString("0.###", CultureInfo.InvariantCulture);
+        }
+
+        private static string F(TimeSpan? value)
+        {
+            return value.HasValue ? F(value.Value) : "NaN";
         }
 
         private static string D(double value)

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net472;net8.0</TargetFrameworks>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <LangVersion>10.0</LangVersion>
+    <DefineConstants>$(DefineConstants);HAS_SYSTEM_LINQ_APPEND</DefineConstants>
+  </PropertyGroup>
+
+  <Import Project="..\..\Dependencies\SimpleSoflanFramework\SimpleSoflanFramework.Core\SimpleSoflanFramework.Core.projitems" Label="Shared" />
+</Project>

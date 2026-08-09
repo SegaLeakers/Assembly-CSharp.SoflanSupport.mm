@@ -1,3 +1,5 @@
+using System;
+
 namespace SoflanSupport
 {
     /// <summary>
@@ -7,37 +9,58 @@ namespace SoflanSupport
     /// </summary>
     public static class SoflanRuntimeTime
     {
-        public static float NormalizeRuntimeChartOffsetMsec(float runtimeChartOffsetMsec)
+        internal static TimeSpan FromGameMsecBoundary(float gameMsec)
         {
-            return IsFinite(runtimeChartOffsetMsec) ? runtimeChartOffsetMsec : 0f;
+            if (float.IsNaN(gameMsec) || float.IsInfinity(gameMsec))
+                return TimeSpan.Zero;
+
+            return FromMilliseconds(gameMsec);
         }
 
-        public static float ToRawChartAudioMsec(
-            float runtimeCurrentMsec,
-            float runtimeChartOffsetMsec,
-            float visualAudioOffsetMsec)
+        internal static TimeSpan FromMilliseconds(double milliseconds)
         {
-            if (!IsFinite(runtimeCurrentMsec))
-                return 0f;
+            if (double.IsNaN(milliseconds) || double.IsInfinity(milliseconds))
+                return TimeSpan.Zero;
 
-            var normalizedChartOffsetMsec = NormalizeRuntimeChartOffsetMsec(runtimeChartOffsetMsec);
-            var normalizedVisualOffsetMsec = IsFinite(visualAudioOffsetMsec)
-                ? visualAudioOffsetMsec
-                : 0f;
-            var rawChartAudioMsec = runtimeCurrentMsec
-                - normalizedChartOffsetMsec
-                + normalizedVisualOffsetMsec;
+            var ticks = milliseconds * TimeSpan.TicksPerMillisecond;
+            if (ticks >= TimeSpan.MaxValue.Ticks)
+                return TimeSpan.MaxValue;
+            if (ticks <= TimeSpan.MinValue.Ticks)
+                return TimeSpan.MinValue;
 
-            // TGridCalculator 对负音频时间没有有效 BPM timing point；必须在完成
-            // t - GetAdjustMSec + visualOffset 后再钳制，不能提前钳制运行时钟。
-            return !IsFinite(rawChartAudioMsec) || rawChartAudioMsec < 0f
-                ? 0f
-                : rawChartAudioMsec;
+            return TimeSpan.FromTicks((long)Math.Round(
+                ticks,
+                MidpointRounding.AwayFromZero));
         }
 
-        private static bool IsFinite(float value)
+        public static TimeSpan ToRawChartAudioTime(
+            TimeSpan runtimeAudioTime,
+            TimeSpan runtimeChartOffset,
+            TimeSpan visualAudioOffset)
         {
-            return !float.IsNaN(value) && !float.IsInfinity(value);
+            long rawTicks;
+            try
+            {
+                rawTicks = checked(
+                    runtimeAudioTime.Ticks
+                    - runtimeChartOffset.Ticks
+                    + visualAudioOffset.Ticks);
+            }
+            catch (OverflowException)
+            {
+                var exactTicks = (decimal)runtimeAudioTime.Ticks
+                    - runtimeChartOffset.Ticks
+                    + visualAudioOffset.Ticks;
+                if (exactTicks <= 0)
+                    return TimeSpan.Zero;
+                return exactTicks >= TimeSpan.MaxValue.Ticks
+                    ? TimeSpan.MaxValue
+                    : TimeSpan.FromTicks((long)exactTicks);
+            }
+
+            return rawTicks <= 0
+                ? TimeSpan.Zero
+                : TimeSpan.FromTicks(rawTicks);
         }
     }
 }

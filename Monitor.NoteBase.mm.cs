@@ -2,12 +2,12 @@
 // patch_Monitor.NoteBase — 对应 head commit 2a7a4a4 中 Monitor/NoteBase.cs 的改动.
 // 所有被访问的 NoteBase 成员均为 protected, patch_NoteBase : NoteBase 可直接访问, 无需公开化.
 // 改动:
-// - 新增字段 soflanManager / isInSoflan / noteSoflanTime (在 Initialize 中赋值)
+// - 新增字段 soflanManager / isInSoflan / noteSoflanPosition (在 Initialize 中赋值)
 // - Initialize() 末尾追加 soflan 初始化 (orig_ 包装)
 // - NoteCheck() 末尾追加 soflan 缩放重算 (orig_ 包装)
 // - EndNote() 末尾追加日志 (orig_ 包装)
 // - GetNoteYPosition() 开头追加 soflan 早返回 (orig_ 包装)
-// - 新增 checkSupportSoflan / GetSoflanTimeDiff / GetNoteYPosition_soflan (verbatim)
+// - 新增 checkSupportSoflan / GetSoflanPositionDiff / GetNoteYPosition_soflan (verbatim)
 // - 放弃 DumpCurrent (依赖 GameCtrl.DumpCurrent 的 private 字段访问)
 using DB;
 using MAI2.Util;
@@ -24,11 +24,11 @@ namespace Monitor
         private SoflanManager soflanManager;
         private bool isInSoflan;
         private int noteSoflanGroup;
-        private float noteSoflanTime;
+        private SoflanPosition noteSoflanPosition;
         private bool isFixedSoflanToUnifiedSpeed;
         private float fixedSoflanUnifiedSpeed;
-        private float visualDefaultMsec;
-        private float maiBugAdjustMsec;
+        private double visualDefaultDistance;
+        private TimeSpan maiBugAdjust;
 
 #if DEBUG
         // --- 调试面板选中 (右键点击 Tap) ---
@@ -36,8 +36,8 @@ namespace Monitor
         // 本类通过 SoflanPanelBehaviour.IsNoteSelected(this) 查询。
         private Color _origSpriteColor;         // 选中前的原 sprite color, 取消选中时恢复
         private bool _colorSaved;
-        private float _rawCurrentSoflanTime;
-        private float _adjustedCurrentSoflanTime;
+        private SoflanPosition _rawCurrentSoflanPosition;
+        private SoflanPosition _adjustedCurrentSoflanPosition;
 #endif
 
         public extern void orig_Initialize(NoteData note);
@@ -67,19 +67,16 @@ namespace Monitor
             if (isInSoflan)
             {
                 noteSoflanGroup = soflanManager.getNoteSoflanGroup(MonitorId, NoteIndex);
-                var noteAudioMsec = soflanManager.getNoteAudioMsecForSoflan(
+                noteSoflanPosition = soflanManager.GetNoteSoflanPosition(
                     MonitorId,
                     NoteIndex,
-                    AppearMsec);
-                noteSoflanTime = soflanManager.ConvertAudioTimeToY_PreviewMode(
-                    MonitorId,
-                    noteAudioMsec,
+                    SoflanRuntimeTime.FromGameMsecBoundary(AppearMsec),
                     noteSoflanGroup);
             }
             else
             {
                 noteSoflanGroup = 0;
-                noteSoflanTime = AppearMsec;
+                noteSoflanPosition = new SoflanPosition(AppearMsec);
             }
 
             var fixedNote = (patch_NoteData)note;
@@ -88,26 +85,26 @@ namespace Monitor
             fixedSoflanUnifiedSpeed = fixedNote.fixedSoflanUnifiedSpeed > 0f
                 ? fixedNote.fixedSoflanUnifiedSpeed
                 : FixedSoflan.DefaultUnifiedSpeed;
-            visualDefaultMsec = isFixedSoflanToUnifiedSpeed
-                ? FixedSoflan.GetDefaultMsec(fixedSoflanUnifiedSpeed)
+            visualDefaultDistance = isFixedSoflanToUnifiedSpeed
+                ? FixedSoflan.GetDefaultTime(fixedSoflanUnifiedSpeed).TotalMilliseconds
                 : DefaultMsec;
-            maiBugAdjustMsec = SoflanVisualTiming.GetMaiBugAdjustMsec(
+            maiBugAdjust = SoflanVisualTiming.GetMaiBugAdjust(
                 note.type.getEnum(),
-                2f * visualDefaultMsec);
+                SoflanRuntimeTime.FromMilliseconds(2d * visualDefaultDistance));
 
             RestoreOriginalLaneJudgeOrder();
 
             SoflanDiagnostic.ObjectInitialized(
                 MonitorId,
                 note,
-                AppearMsec,
-                TailMsec,
-                visualDefaultMsec,
+                SoflanRuntimeTime.FromGameMsecBoundary(AppearMsec),
+                SoflanRuntimeTime.FromGameMsecBoundary(TailMsec),
+                SoflanRuntimeTime.FromMilliseconds(visualDefaultDistance),
                 noteSoflanGroup,
                 isFixedSoflanToUnifiedSpeed,
                 fixedSoflanUnifiedSpeed,
-                noteSoflanTime,
-                maiBugAdjustMsec,
+                noteSoflanPosition,
+                maiBugAdjust,
                 "NoteBase.Initialize");
 
         }
@@ -153,16 +150,16 @@ namespace Monitor
                 ButtonId,
                 -1,
                 true,
-                AppearMsec,
-                TailMsec,
+                SoflanRuntimeTime.FromGameMsecBoundary(AppearMsec),
+                SoflanRuntimeTime.FromGameMsecBoundary(TailMsec),
                 JudgeType,
-                GetJudgeStartMsec(),
-                GetJudgeEndMsec(),
+                SoflanRuntimeTime.FromGameMsecBoundary(GetJudgeStartMsec()),
+                SoflanRuntimeTime.FromGameMsecBoundary(GetJudgeEndMsec()),
                 JudgeResult,
                 NoteJudge.ETiming.End,
                 EndFlag,
                 IsJudgeNote(),
-                JudgeTimingDiffMsec,
+                SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec),
                 "NoteBase.NoteCheck");
             orig_NoteCheck();
             SoflanDiagnostic.AfterJudgeCheck(
@@ -170,7 +167,7 @@ namespace Monitor
                 JudgeResult,
                 NoteJudge.ETiming.End,
                 EndFlag,
-                JudgeTimingDiffMsec);
+                SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec));
 
             if (isInSoflan && checkSupportSoflan() && !EndFlag)
             {
@@ -187,9 +184,10 @@ namespace Monitor
                                            |
                            scale=1       -----      0
                 */
-                var absDiffTime = Math.Abs(GetSoflanTimeDiff());
+                var absDiffTime = Math.Abs(GetSoflanPositionDiff());
 
-                var scale = Mathf.Clamp01((2f * visualDefaultMsec - absDiffTime) / visualDefaultMsec);
+                var scale = Mathf.Clamp01((float)((2d * visualDefaultDistance - absDiffTime)
+                    / visualDefaultDistance));
                 scale *= Singleton<GamePlayManager>.Instance.GetGameScore(MonitorId).UserOption.NoteSize.GetValue();
                 NoteObj.transform.localScale = new Vector3(scale, scale, 0f);
             }
@@ -213,26 +211,26 @@ namespace Monitor
 #endif
         }
 
-        private float GetSoflanTimeDiff()
+        private double GetSoflanPositionDiff()
         {
-            return GetSoflanTimeDiff(NotesManager.GetCurrentMsec());
+            return GetSoflanPositionDiff(SoflanGameClock.CurrentTime);
         }
 
-        private float GetSoflanTimeDiff(float currentMsec)
+        private double GetSoflanPositionDiff(TimeSpan currentTime)
         {
-            var currentSoflanTime = soflanManager.GetCurrentSoflanTimeWithOffsetsCached(
+            var currentSoflanPosition = soflanManager.GetCurrentSoflanPositionWithOffsetsCached(
                 MonitorId,
-                currentMsec,
-                maiBugAdjustMsec,
+                currentTime,
+                maiBugAdjust,
                 noteSoflanGroup);
 #if DEBUG
-            _rawCurrentSoflanTime = soflanManager.GetCurrentSoflanTimeCached(
+            _rawCurrentSoflanPosition = soflanManager.GetCurrentSoflanPositionCached(
                 MonitorId,
-                currentMsec,
+                currentTime,
                 noteSoflanGroup);
-            _adjustedCurrentSoflanTime = currentSoflanTime;
+            _adjustedCurrentSoflanPosition = currentSoflanPosition;
 #endif
-            return noteSoflanTime - currentSoflanTime;
+            return noteSoflanPosition.DeltaTo(currentSoflanPosition);
         }
 
         protected extern void orig_EndNote();
@@ -299,12 +297,12 @@ namespace Monitor
 
 
             */
-            var currentTime = NotesManager.GetCurrentMsec();
-            var diffTime = GetSoflanTimeDiff(currentTime);
+            var currentTime = SoflanGameClock.CurrentTime;
+            var diffTime = GetSoflanPositionDiff(currentTime);
             var absDiffTime = Math.Abs(diffTime);
 
-            var scaleStartTime = 2f * visualDefaultMsec;
-            var moveStartTime = visualDefaultMsec;
+            var scaleStartTime = 2d * visualDefaultDistance;
+            var moveStartTime = visualDefaultDistance;
             var fixedMotionProgress = isFixedSoflanToUnifiedSpeed
                 ? FixedSoflan.GetMotionProgress(diffTime, fixedSoflanUnifiedSpeed)
                 : 0f;
@@ -327,24 +325,24 @@ namespace Monitor
                       soflanY = 120                  400                  680
                              StartPos              EndPos      EndPos + (EndPos - StartPos)
              */
-            var insideY = StartPos;
-            var outsideY = EndPos + (EndPos - StartPos);
+            var insideY = (double)StartPos;
+            var outsideY = EndPos + (double)(EndPos - StartPos);
 
             var soflanY = isFixedSoflanToUnifiedSpeed
                 ? FixedSoflan.GetYFromMotionProgress(StartPos, EndPos, fixedMotionProgress)
-                : MathUtils.MapValue(diffTime, -moveStartTime, moveStartTime, outsideY, insideY);
-            // MaiBug 的音频毫秒偏移已在 GetSoflanTimeDiff 中经过 Soflan 时间轴映射；
+                : SoflanVisualMath.MapValue(diffTime, -moveStartTime, moveStartTime, outsideY, insideY);
+            // MaiBug 的音频毫秒偏移已在 GetSoflanPositionDiff 中经过 Soflan 时间轴映射；
             // 这里不再叠加独立坐标偏移，否则会重复补偿。
             var adjustedSoflanY = soflanY;
 
-            var clipedSoflanY = Mathf.Clamp(adjustedSoflanY, 120, 680);
+            var clipedSoflanY = Math.Max(120d, Math.Min(680d, adjustedSoflanY));
 
             var moveProgress = (clipedSoflanY - StartPos) / (EndPos - StartPos);
             moveProgress = Math.Max(0, moveProgress); // always >= 0
 
             var guideScale = 0.75f * moveProgress;
             var adjustedGuideScale = guideScale + guideScaleAdj;
-            var finalScale = 0.25f + adjustedGuideScale;
+            var finalScale = (float)(0.25d + adjustedGuideScale);
 
             if (absDiffTime > scaleStartTime)
             {
@@ -361,7 +359,7 @@ namespace Monitor
                 {
                     var scaleProgress = isFixedSoflanToUnifiedSpeed
                         ? fixedScaleProgress
-                        : MathUtils.MapValue(absDiffTime, scaleStartTime, moveStartTime, 0, 1);
+                        : (float)SoflanVisualMath.MapValue(absDiffTime, scaleStartTime, moveStartTime, 0, 1);
                     NoteGuideTrans.localScale = new Vector3(finalScale, finalScale, 1f);
                     GuideObj.SetAlpha(scaleProgress);
                 }
@@ -383,32 +381,32 @@ namespace Monitor
                 SoflanPanelBehaviour.SelectedData = new SoflanPanelBehaviour.SelectedNoteData
                 {
                     NoteIndex = NoteIndex,
-                    DiffTime = diffTime,
-                    AbsDiffTime = absDiffTime,
-                    ScaleStartTime = scaleStartTime,
-                    MoveStartTime = moveStartTime,
+                    DiffPosition = diffTime,
+                    AbsDiffPosition = absDiffTime,
+                    ScaleStartDistance = scaleStartTime,
+                    MoveStartDistance = moveStartTime,
                     NoteStat = NoteStat,
-                    MoveProgress = moveProgress,
+                    MoveProgress = (float)moveProgress,
                     FinalScale = finalScale,
-                    InsideY = insideY,
-                    OutsideY = outsideY,
-                    SoflanY = soflanY,
-                    ClipedSoflanY = clipedSoflanY,
+                    InsideY = (float)insideY,
+                    OutsideY = (float)outsideY,
+                    SoflanY = (float)soflanY,
+                    ClipedSoflanY = (float)clipedSoflanY,
                     IsFixedSoflanToUnifiedSpeed = isFixedSoflanToUnifiedSpeed,
                     FixedSoflanUnifiedSpeed = fixedSoflanUnifiedSpeed,
                     FixedMotionProgress = fixedMotionProgress,
                     FixedScaleProgress = fixedScaleProgress,
                     MaiBugAdjustEnabled = Setting.EnableSoflanMaiBugAdjust,
-                    MaiBugAdjustMsec = maiBugAdjustMsec,
+                    MaiBugAdjust = maiBugAdjust,
                     MonitorId = MonitorId,
-                    RuntimeCurrentMsec = currentTime,
-                    RuntimeChartOffsetMsec = soflanManager.getRuntimeChartOffsetMsec(MonitorId),
-                    AdjustedRawCurrentMsec = SoflanRuntimeTime.ToRawChartAudioMsec(
+                    RuntimeCurrentTime = currentTime,
+                    RuntimeChartOffset = soflanManager.getRuntimeChartOffset(MonitorId),
+                    AdjustedRawCurrentTime = SoflanRuntimeTime.ToRawChartAudioTime(
                         currentTime,
-                        soflanManager.getRuntimeChartOffsetMsec(MonitorId),
-                        maiBugAdjustMsec),
-                    RawCurrentSoflanTime = _rawCurrentSoflanTime,
-                    AdjustedCurrentSoflanTime = _adjustedCurrentSoflanTime,
+                        soflanManager.getRuntimeChartOffset(MonitorId),
+                        maiBugAdjust),
+                    RawCurrentSoflanPosition = _rawCurrentSoflanPosition,
+                    AdjustedCurrentSoflanPosition = _adjustedCurrentSoflanPosition,
                 };
                 SoflanPanelBehaviour.HasSelectedData = true;
             }
@@ -420,17 +418,17 @@ namespace Monitor
                 NoteKind,
                 noteSoflanGroup,
                 currentTime,
-                noteSoflanTime - diffTime,
-                noteSoflanTime,
+                new SoflanPosition(noteSoflanPosition.Value - diffTime),
+                noteSoflanPosition,
                 diffTime,
-                clipedSoflanY,
+                (float)clipedSoflanY,
                 scaleStartTime,
                 moveStartTime,
                 (int)NoteStat,
                 isFixedSoflanToUnifiedSpeed,
                 "NoteBase.GetNoteYPosition");
 
-            return clipedSoflanY;
+            return (float)clipedSoflanY;
         }
     }
 }

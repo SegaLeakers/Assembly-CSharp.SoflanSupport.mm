@@ -30,7 +30,7 @@ namespace Manager
                 records,
                 sr,
                 playerId,
-                SoflanVisualTiming.GetRuntimeChartOffsetMsec(playerId));
+                SoflanVisualTiming.GetRuntimeChartOffset(playerId));
         }
 
         // loadNote: return 前 — 注册 note 的 soflan 分组 (对应 head 中 SoflanManager.loadNote 调用)
