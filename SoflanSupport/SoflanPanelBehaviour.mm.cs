@@ -9,6 +9,7 @@
 //
 // 性能: 数据在 Update 中节流刷新 (OnGUI 一帧多调, 复用缓存); _allSpeeds 复用零 List 分配;
 // GroupSpeed 为值类型无堆分配; 面板隐藏时 OnGUI 直接 return。
+using System;
 using System.Collections.Generic;
 using MAI2.Util;
 using Manager;
@@ -23,9 +24,9 @@ namespace SoflanSupport
         private static bool _visible = true;
         private static bool _showAllGroups = false;   // checkbox 状态
 
-        private float _msec;
+        private TimeSpan _currentTime;
         private int _displayMonitorId;
-        private float _runtimeChartOffsetMsec;
+        private TimeSpan _runtimeChartOffset;
         private double _speed0;
         private bool _hasData;
         private float _fps;
@@ -46,15 +47,16 @@ namespace SoflanSupport
         {
             public int MonitorId;
             public int NoteIndex;
-            public double DiffTime, AbsDiffTime;
-            public float ScaleStartTime, MoveStartTime, MoveProgress, FinalScale;
+            public double DiffPosition, AbsDiffPosition;
+            public double ScaleStartDistance, MoveStartDistance;
+            public float MoveProgress, FinalScale;
             public float InsideY, OutsideY, SoflanY, ClipedSoflanY;
             public bool IsFixedSoflanToUnifiedSpeed;
             public float FixedSoflanUnifiedSpeed, FixedMotionProgress, FixedScaleProgress;
             public bool MaiBugAdjustEnabled;
-            public float RuntimeCurrentMsec, RuntimeChartOffsetMsec;
-            public float MaiBugAdjustMsec, AdjustedRawCurrentMsec;
-            public float RawCurrentSoflanTime, AdjustedCurrentSoflanTime;
+            public TimeSpan RuntimeCurrentTime, RuntimeChartOffset;
+            public TimeSpan MaiBugAdjust, AdjustedRawCurrentTime;
+            public SoflanPosition RawCurrentSoflanPosition, AdjustedCurrentSoflanPosition;
             public NoteBase.NoteStatus NoteStat;
         }
         public static SelectedNoteData SelectedData;
@@ -136,24 +138,24 @@ namespace SoflanSupport
 
             try
             {
-                _msec = NotesManager.GetCurrentMsec();
+                _currentTime = SoflanGameClock.CurrentTime;
                 _displayMonitorId = _selectedNote == null ? 0 : _selectedNote.MonitorId;
                 var sm = Singleton<SoflanManager>.Instance;
                 _hasData = sm != null && sm.containsSoflans(_displayMonitorId);
                 if (_hasData)
                 {
-                    _runtimeChartOffsetMsec = sm.getRuntimeChartOffsetMsec(_displayMonitorId);
-                    _speed0 = sm.GetCurrentSpeed(_displayMonitorId, 0, _msec);
+                    _runtimeChartOffset = sm.getRuntimeChartOffset(_displayMonitorId);
+                    _speed0 = sm.GetCurrentSpeed(_displayMonitorId, 0, _currentTime);
                     if (_showAllGroups)
                         sm.FillCurrentSpeeds(
                             _displayMonitorId,
-                            _msec,
+                            _currentTime,
                             _allSpeeds,
                             MaxDisplayedGroups);
                 }
                 else
                 {
-                    _runtimeChartOffsetMsec = 0f;
+                    _runtimeChartOffset = TimeSpan.Zero;
                     _speed0 = 1.0;
                     _allSpeeds.Clear();
                 }
@@ -161,7 +163,7 @@ namespace SoflanSupport
             catch
             {
                 _hasData = false;
-                _runtimeChartOffsetMsec = 0f;
+                _runtimeChartOffset = TimeSpan.Zero;
                 _speed0 = 1.0;
                 _allSpeeds.Clear();
             }
@@ -221,14 +223,13 @@ namespace SoflanSupport
             if (!_visible) return;
 
             // 时分秒格式
-            var span = System.TimeSpan.FromMilliseconds(_msec);
-            string timeStr = $"{(int)span.TotalMinutes:D2}:{span.Seconds:D2}.{span.Milliseconds:D3}";
+            string timeStr = $"{(int)_currentTime.TotalMinutes:D2}:{_currentTime.Seconds:D2}.{_currentTime.Milliseconds:D3}";
 
             // 右上角: x = 屏幕宽 - 面板宽 - 右边距 10
             float panelW = 300f;
             GUILayout.BeginArea(new Rect(Screen.width - panelW - 10f, 10f, panelW, 480f), "Soflan Monitor (F8 | 右键选Tap)", GUI.skin.box);
-            GUILayout.Label($"PlayTime: {_msec:F1} ms  ({timeStr})");
-            GUILayout.Label($"Monitor: {_displayMonitorId}  ChartOffset: {_runtimeChartOffsetMsec:F3}ms");
+            GUILayout.Label($"PlayTime: {_currentTime.TotalMilliseconds:F1} ms  ({timeStr})");
+            GUILayout.Label($"Monitor: {_displayMonitorId}  ChartOffset: {_runtimeChartOffset.TotalMilliseconds:F3}ms");
             GUILayout.Label($"SoflanGroup0 Speed: {_speed0:F3}x" + (_hasData ? "" : " (no data)"));
             GUILayout.Label($"MaiBugAdjust: {(Setting.EnableSoflanMaiBugAdjust ? "Enabled" : "Disabled")}");
             GUILayout.Label($"FPS: {_fps:F1}");
@@ -246,14 +247,14 @@ namespace SoflanSupport
                 var d = SelectedData;
                 GUILayout.Label($"--- Selected Tap (右键循环切换) ---");
                 GUILayout.Label($"Monitor: {d.MonitorId}  NoteIndex: {d.NoteIndex}  NoteStat: {d.NoteStat}");
-                GUILayout.Label($"diffTime: {d.DiffTime:F3}  absDiffTime: {d.AbsDiffTime:F3}");
-                GUILayout.Label($"scaleStartTime: {d.ScaleStartTime:F3}  moveStartTime: {d.MoveStartTime:F3}");
+                GUILayout.Label($"diffPosition: {d.DiffPosition:F3}  absDiffPosition: {d.AbsDiffPosition:F3}");
+                GUILayout.Label($"scaleStartDistance: {d.ScaleStartDistance:F3}  moveStartDistance: {d.MoveStartDistance:F3}");
                 GUILayout.Label($"moveProgress: {d.MoveProgress:F3}  finalScale: {d.FinalScale:F3}");
                 GUILayout.Label($"Fixed: {d.IsFixedSoflanToUnifiedSpeed}  FixedSpd: {d.FixedSoflanUnifiedSpeed:F3}");
                 GUILayout.Label($"FixedMoveP: {d.FixedMotionProgress:F3}  FixedScaleP: {d.FixedScaleProgress:F3}");
-                GUILayout.Label($"Runtime: {d.RuntimeCurrentMsec:F3}  ChartOffset: {d.RuntimeChartOffsetMsec:F3}");
-                GUILayout.Label($"MaiBug: {(d.MaiBugAdjustEnabled ? "Enabled" : "Disabled")}  {d.MaiBugAdjustMsec:F3}ms  RawAdjusted: {d.AdjustedRawCurrentMsec:F3}");
-                GUILayout.Label($"RawSoflanTime: {d.RawCurrentSoflanTime:F3}  Adjusted: {d.AdjustedCurrentSoflanTime:F3}");
+                GUILayout.Label($"Runtime: {d.RuntimeCurrentTime.TotalMilliseconds:F3}  ChartOffset: {d.RuntimeChartOffset.TotalMilliseconds:F3}");
+                GUILayout.Label($"MaiBug: {(d.MaiBugAdjustEnabled ? "Enabled" : "Disabled")}  {d.MaiBugAdjust.TotalMilliseconds:F3}ms  RawAdjusted: {d.AdjustedRawCurrentTime.TotalMilliseconds:F3}");
+                GUILayout.Label($"RawSoflanPosition: {d.RawCurrentSoflanPosition.Value:F3}  Adjusted: {d.AdjustedCurrentSoflanPosition.Value:F3}");
                 GUILayout.Label($"insideY: {d.InsideY:F2}  outsideY: {d.OutsideY:F2}");
                 GUILayout.Label($"soflanY: {d.SoflanY:F2}  clipedSoflanY: {d.ClipedSoflanY:F2}");
             }
@@ -274,8 +275,8 @@ namespace SoflanSupport
         {
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("=== Soflan Monitor ===");
-            sb.AppendLine($"PlayTime: {_msec:F1} ms  ({timeStr})");
-            sb.AppendLine($"Monitor: {_displayMonitorId}  ChartOffset: {_runtimeChartOffsetMsec:F3}ms");
+            sb.AppendLine($"PlayTime: {_currentTime.TotalMilliseconds:F1} ms  ({timeStr})");
+            sb.AppendLine($"Monitor: {_displayMonitorId}  ChartOffset: {_runtimeChartOffset.TotalMilliseconds:F3}ms");
             sb.AppendLine($"SoflanGroup0 Speed: {_speed0:F3}x" + (_hasData ? "" : " (no data)"));
             sb.AppendLine($"FPS: {_fps:F1}");
             if (_showAllGroups && _hasData)
@@ -291,14 +292,14 @@ namespace SoflanSupport
                 var d = SelectedData;
                 sb.AppendLine("--- Selected Tap ---");
                 sb.AppendLine($"Monitor: {d.MonitorId}  NoteIndex: {d.NoteIndex}  NoteStat: {d.NoteStat}");
-                sb.AppendLine($"diffTime: {d.DiffTime:F3}  absDiffTime: {d.AbsDiffTime:F3}");
-                sb.AppendLine($"scaleStartTime: {d.ScaleStartTime:F3}  moveStartTime: {d.MoveStartTime:F3}");
+                sb.AppendLine($"diffPosition: {d.DiffPosition:F3}  absDiffPosition: {d.AbsDiffPosition:F3}");
+                sb.AppendLine($"scaleStartDistance: {d.ScaleStartDistance:F3}  moveStartDistance: {d.MoveStartDistance:F3}");
                 sb.AppendLine($"moveProgress: {d.MoveProgress:F3}  finalScale: {d.FinalScale:F3}");
                 sb.AppendLine($"Fixed: {d.IsFixedSoflanToUnifiedSpeed}  FixedSpd: {d.FixedSoflanUnifiedSpeed:F3}");
                 sb.AppendLine($"FixedMoveP: {d.FixedMotionProgress:F3}  FixedScaleP: {d.FixedScaleProgress:F3}");
-                sb.AppendLine($"Runtime: {d.RuntimeCurrentMsec:F3}  ChartOffset: {d.RuntimeChartOffsetMsec:F3}");
-                sb.AppendLine($"MaiBug: {(d.MaiBugAdjustEnabled ? "Enabled" : "Disabled")}  {d.MaiBugAdjustMsec:F3}ms  RawAdjusted: {d.AdjustedRawCurrentMsec:F3}");
-                sb.AppendLine($"RawSoflanTime: {d.RawCurrentSoflanTime:F3}  Adjusted: {d.AdjustedCurrentSoflanTime:F3}");
+                sb.AppendLine($"Runtime: {d.RuntimeCurrentTime.TotalMilliseconds:F3}  ChartOffset: {d.RuntimeChartOffset.TotalMilliseconds:F3}");
+                sb.AppendLine($"MaiBug: {(d.MaiBugAdjustEnabled ? "Enabled" : "Disabled")}  {d.MaiBugAdjust.TotalMilliseconds:F3}ms  RawAdjusted: {d.AdjustedRawCurrentTime.TotalMilliseconds:F3}");
+                sb.AppendLine($"RawSoflanPosition: {d.RawCurrentSoflanPosition.Value:F3}  Adjusted: {d.AdjustedCurrentSoflanPosition.Value:F3}");
                 sb.AppendLine($"insideY: {d.InsideY:F2}  outsideY: {d.OutsideY:F2}");
                 sb.AppendLine($"soflanY: {d.SoflanY:F2}  clipedSoflanY: {d.ClipedSoflanY:F2}");
             }

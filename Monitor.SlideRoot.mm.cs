@@ -25,21 +25,24 @@ namespace Monitor
         {
             var manager = Singleton<SoflanManager>.Instance;
             var group = manager.getNoteSoflanGroup(MonitorId, note);
-            var rawNoteMsec = manager.getNoteAudioMsecForSoflan(MonitorId, note);
-            var noteSoflanTime = manager.containsSoflans(MonitorId)
-                ? manager.ConvertAudioTimeToY_PreviewMode(MonitorId, rawNoteMsec, group)
-                : AppearMsec;
+            var noteSoflanPosition = manager.containsSoflans(MonitorId)
+                ? manager.GetNoteSoflanPosition(
+                    MonitorId,
+                    note.indexNote,
+                    SoflanRuntimeTime.FromGameMsecBoundary(note.time.msec),
+                    group)
+                : new SoflanPosition(AppearMsec);
             SoflanDiagnostic.ObjectInitialized(
                 MonitorId,
                 note,
-                AppearMsec,
-                TailMsec,
-                DefaultMsec,
+                SoflanRuntimeTime.FromGameMsecBoundary(AppearMsec),
+                SoflanRuntimeTime.FromGameMsecBoundary(TailMsec),
+                SoflanRuntimeTime.FromGameMsecBoundary(DefaultMsec),
                 group,
                 false,
                 FixedSoflan.DefaultUnifiedSpeed,
-                noteSoflanTime,
-                0f,
+                noteSoflanPosition,
+                System.TimeSpan.Zero,
                 "SlideRoot.Initialize");
         }
 
@@ -53,11 +56,11 @@ namespace Monitor
                 _hitAreaList?.Count ?? 0,
                 _hitIn,
                 _hitSubIndex,
-                TailMsec,
-                lastWaitTime,
+                SoflanRuntimeTime.FromGameMsecBoundary(TailMsec),
+                SoflanRuntimeTime.FromGameMsecBoundary(lastWaitTime),
                 JudgeResult,
                 EndFlag,
-                JudgeTimingDiffMsec,
+                SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec),
                 string.Empty,
                 "SlideRoot.NoteCheck");
         }

@@ -1,4 +1,5 @@
 using Manager;
+using System;
 using UnityEngine;
 
 namespace SoflanSupport
@@ -42,42 +43,52 @@ namespace SoflanSupport
             return speed > 0f ? speed : DefaultUnifiedSpeed;
         }
 
-        public static float GetDefaultMsec(float unifiedSpeed)
+        public static TimeSpan GetDefaultTime(float unifiedSpeed)
         {
-            return MaiBugAdjust.DefaultMsecNumerator / unifiedSpeed;
+            if (unifiedSpeed <= 0f || float.IsNaN(unifiedSpeed) || float.IsInfinity(unifiedSpeed))
+                return TimeSpan.Zero;
+
+            var ticks = MaiBugAdjust.DefaultMsecNumerator
+                / unifiedSpeed
+                * TimeSpan.TicksPerMillisecond;
+            return TimeSpan.FromTicks((long)System.Math.Round(
+                ticks,
+                MidpointRounding.AwayFromZero));
         }
 
-        public static float GetMaiBugAdjustMSec(float unifiedSpeed)
+        public static TimeSpan GetMaiBugAdjust(float unifiedSpeed)
         {
             return MaiBugAdjust.Calculate(unifiedSpeed, Setting.EnableSoflanMaiBugAdjust);
         }
 
-        public static float GetMoveStartTime(float unifiedSpeed)
+        public static double GetMoveStartDistance(float unifiedSpeed)
         {
             // MaiBug 已通过 currentAudioMsec + adjustMsec 映射进 Soflan 时间轴，
             // 这里的门槛保持为纯 Soflan Y 距离，避免重复应用补偿。
-            return GetDefaultMsec(unifiedSpeed);
+            return GetDefaultTime(unifiedSpeed).TotalMilliseconds;
         }
 
-        public static float GetScaleStartTime(float unifiedSpeed)
+        public static double GetScaleStartDistance(float unifiedSpeed)
         {
-            return 2f * GetDefaultMsec(unifiedSpeed);
+            return GetMoveStartDistance(unifiedSpeed) * 2d;
         }
 
-        public static float GetVisibleMsec(float unifiedSpeed)
+        public static TimeSpan GetVisibleTime(float unifiedSpeed)
         {
-            return GetDefaultMsec(unifiedSpeed) * 2f;
+            var defaultTime = GetDefaultTime(unifiedSpeed);
+            return TimeSpan.FromTicks(checked(defaultTime.Ticks * 2));
         }
 
-        public static float GetMotionProgress(float diffTime, float unifiedSpeed)
+        public static float GetMotionProgress(double diffPosition, float unifiedSpeed)
         {
-            float moveStartTime = GetMoveStartTime(unifiedSpeed);
-            return Mathf.Clamp01((moveStartTime - diffTime) / (2f * moveStartTime));
+            var moveStartDistance = GetMoveStartDistance(unifiedSpeed);
+            return Mathf.Clamp01((float)((moveStartDistance - diffPosition) / (2d * moveStartDistance)));
         }
 
-        public static float GetScaleProgress(float absDiffTime, float unifiedSpeed)
+        public static float GetScaleProgress(double absDiffPosition, float unifiedSpeed)
         {
-            return Mathf.Clamp01((GetScaleStartTime(unifiedSpeed) - absDiffTime) / GetDefaultMsec(unifiedSpeed));
+            return Mathf.Clamp01((float)((GetScaleStartDistance(unifiedSpeed) - absDiffPosition)
+                / GetMoveStartDistance(unifiedSpeed)));
         }
 
         public static float GetYFromMotionProgress(float startPos, float endPos, float motionProgress)

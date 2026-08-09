@@ -176,17 +176,7 @@ namespace SoflanCalculator
 
         private static List<string> ReadAllLines(string filePath)
         {
-            var lines = new List<string>();
-            using (var reader = LCPackage.Manager.OpenText(filePath))
-            {
-                string line;
-                while ((line = reader.ReadLine()) != null)
-                {
-                    lines.Add(line);
-                }
-            }
-
-            return lines;
+            return File.ReadAllLines(filePath).ToList();
         }
 
         /// <summary>

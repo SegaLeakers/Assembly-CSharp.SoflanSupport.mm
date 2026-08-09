@@ -16,16 +16,16 @@ namespace Monitor
                 ButtonId,
                 SoflanDiagnostic.GetTouchAreaIndex(TouchArea, ButtonId),
                 false,
-                AppearMsec,
-                TailMsec,
+                SoflanRuntimeTime.FromGameMsecBoundary(AppearMsec),
+                SoflanRuntimeTime.FromGameMsecBoundary(TailMsec),
                 JudgeType,
-                GetJudgeStartMsec(),
-                GetJudgeEndMsec(),
+                SoflanRuntimeTime.FromGameMsecBoundary(GetJudgeStartMsec()),
+                SoflanRuntimeTime.FromGameMsecBoundary(GetJudgeEndMsec()),
                 JudgeResult,
                 GetJudgeHeadResult(),
                 EndFlag,
                 IsJudgeNote(),
-                JudgeTimingDiffMsec,
+                SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec),
                 "TouchHoldC.NoteCheck");
         }
 
@@ -37,7 +37,7 @@ namespace Monitor
                 JudgeResult,
                 GetJudgeHeadResult(),
                 EndFlag,
-                JudgeTimingDiffMsec);
+                SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec));
             SoflanDiagnostic.HoldState(
                 MonitorId,
                 NoteIndex,
@@ -46,7 +46,7 @@ namespace Monitor
                 BodyOn,
                 LastHoldState,
                 TriggerOn,
-                HoldReleaseTime,
+                SoflanRuntimeTime.FromMilliseconds(HoldReleaseTime),
                 EndFlag,
                 "TouchHoldC.NoteCheck");
         }

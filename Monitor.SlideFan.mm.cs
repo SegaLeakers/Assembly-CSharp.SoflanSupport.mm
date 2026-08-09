@@ -42,11 +42,11 @@ namespace Monitor
                 count0 + count1 + count2,
                 in0 || in1 || in2,
                 sub0 + sub1 + sub2,
-                TailMsec,
-                lastWaitTime,
+                SoflanRuntimeTime.FromGameMsecBoundary(TailMsec),
+                SoflanRuntimeTime.FromGameMsecBoundary(lastWaitTime),
                 JudgeResult,
                 EndFlag,
-                JudgeTimingDiffMsec,
+                SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec),
                 $"hit={hit0}/{count0},{hit1}/{count1},{hit2}/{count2};in={in0},{in1},{in2};sub={sub0},{sub1},{sub2}",
                 "SlideFan.NoteCheck");
         }

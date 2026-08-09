@@ -11,16 +11,13 @@
 
   <ItemGroup>
     <Compile Include="..\SoflanSupport\MaiBugAdjust.mm.cs" Link="MaiBugAdjust.mm.cs" />
+    <Compile Include="..\SoflanSupport\SoflanPosition.mm.cs" Link="SoflanPosition.mm.cs" />
     <Compile Include="..\SoflanSupport\SoflanRuntimeTime.mm.cs" Link="SoflanRuntimeTime.mm.cs" />
+    <Compile Include="..\SoflanSupport\SoflanVisualMath.mm.cs" Link="SoflanVisualMath.mm.cs" />
     <Compile Include="..\SoflanSupport\SoflanMarkerParser.mm.cs" Link="SoflanMarkerParser.mm.cs" />
     <ProjectReference Include="..\Dependencies\SimpleSoflanFramework\SimpleSoflanFramework.Core.NetFx472\SimpleSoflanFramework.Core.NetFx472.csproj">
       <Private>true</Private>
     </ProjectReference>
-    <Reference Include="LCPackage">
-      <HintPath>..\Dependencies\LCPackage.dll</HintPath>
-      <Private>true</Private>
-    </Reference>
-    <None Include="..\Dependencies\LCPackage_NT.dll" CopyToOutputDirectory="PreserveNewest" TargetPath="LCPackage_NT.dll" />
   </ItemGroup>
 
 </Project>
