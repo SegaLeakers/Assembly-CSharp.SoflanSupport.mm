@@ -6,7 +6,7 @@
 
 - 调查日期：2026-07-24
 - 调查结论：根因已确认
-- 修复状态：阶段 1～4 已实施并通过数值、构建、MonoMod 应用和静态 IL 验证
+- 修复状态：阶段 1～5 已实施并通过数值、TotalGrid 可见性、构建、MonoMod 应用和静态 IL 验证
 - 未实施增强：identity group 原版路径 bypass；当前仍保留最多约 1px 的往返量化残差
 - 目标边界：只修正 Soflan 视觉时间轴，不修改歌曲播放、判定时间或 MA2 谱面时间
 - 主要复现谱面：`example_01.ma2` 与 `example_04.ma2`（文件名已脱敏）
@@ -665,19 +665,20 @@ ClampToZero(t - J + a)
 `GameCtrl.__SoflanNoteDecision()` 发生在物件实例 `Initialize()` 以前，因此应按当前 `GameCtrl.MonitorIndex` 取得该玩家规范化的 `J`：
 
 ```csharp
-float runtimeChartOffsetMsec =
-    SoflanVisualTiming.GetRuntimeChartOffsetMsec(MonitorIndex);
-
-float currentSoflanTime =
-    soflanManager.GetCurrentSoflanTimeWithOffsetsCached(
+TimeSpan runtimeTime = SoflanGameClock.CurrentTime;
+TimeSpan maiBugAdjust = SoflanVisualTiming.GetMaiBugAdjust(note.type, visibleTime);
+SoflanPosition currentSoflanPosition =
+    soflanManager.GetCurrentSoflanPositionWithOffsetsCached(
         MonitorIndex,
-        NotesManager.GetCurrentMsec(),
-        runtimeChartOffsetMsec,
-        maiBugAdjustMsec,
+        runtimeTime,
+        maiBugAdjust,
         noteSoflanGroup);
 ```
 
-`checkNoteVisible()` 继续使用 raw note msec 与 raw visible ranges 比较，不应改回 `note.time.msec`。
+Phase 5 的最终实现不再把正常 note 转回 raw msec。`checkNoteVisible()` 直接读取加载期缓存的
+`TGrid.TotalGrid`，与 `FillVisibleTotalGridRangesForGamePreview()` 输出的值类型范围比较。只有
+TGrid 缺失、为 null 或读取失败时，才使用 `GetNoteAudioTimeForSoflan()` 的 raw-chart
+`TimeSpan` 与 msec fallback range；该路径按玩家累计并写入诊断。
 
 ### Tap、Break 和 Star
 
@@ -1146,6 +1147,8 @@ dotnet build -c Debug Assembly-CSharp.SoflanSupport.mm.csproj
 dotnet run --project tools/SoflanMarkerTests/SoflanMarkerTests.csproj -c Release
 dotnet run --project tools/SoflanLogTests/SoflanLogTests.csproj -c Release
 dotnet run --project tools/SoflanMaiBugTests/SoflanMaiBugTests.csproj -c Release
+dotnet run --project tools/SoflanVisibilityTests/SoflanVisibilityTests.csproj -c Release -f net8.0 -- coreclr
+tools/run-soflan-tests.sh
 ```
 
 现有 `SoflanMaiBugTests` 必须先扩展为包含真实非零 `J` 的模型，否则测试通过仍不足以证明游戏内等价。
@@ -1168,8 +1171,8 @@ RawCurrentMsec
 MaiBugAdjustMsec
 AdjustedRawCurrentMsec
 NoteRawMsec
-NoteSoflanTime
-CurrentSoflanTime
+NoteSoflanPosition
+CurrentSoflanPosition
 DiffTime
 Y
 BodyScale
@@ -1201,7 +1204,7 @@ GuideAlpha
 
 ## 最终建议
 
-阶段 1～4 已完成以下正式修复，并保留第 7 项作为可选增强：
+阶段 1～5 已完成以下正式修复，并保留第 8 项作为可选增强：
 
 1. 所有 Soflan 视觉入口统一使用 `F_g(t - J + a)`。
 2. `J` 按 Monitor/player 使用本局规范化 `UserOption.GetAdjustMSec()`，不写死、不使用逐 note 量化差值作为主时间原点。
@@ -1209,6 +1212,7 @@ GuideAlpha
 4. current-time 和 visible-range 缓存按玩家隔离；缓存键包含规范化基础偏移和 MaiBug 偏移。
 5. 测试模型显式包含真实 `GetAdjustMSec()`。
 6. 每名玩家只保存一个规范化 J，逐 note observed offset 不进入缓存键，避免 1488 条 note 重新产生 296 种 offset 键。
-7. 如需真正恒定 1x group 与无 SFL 谱面逐公式、逐量化完全一致，再增加保守 identity group bypass；第一版只绕过没有显式 SFL 且不违反 FixedSoflan/MaiBug 开关语义的物件。
+7. 可见性主路径使用 cached note `TGrid.TotalGrid` 和值类型 `VisibleTotalGridRange`；msec 只作为缺失/失败 TGrid 的 raw-chart fallback，并有玩家级计数。
+8. 如需真正恒定 1x group 与无 SFL 谱面逐公式、逐量化完全一致，再增加保守 identity group bypass；第一版只绕过没有显式 SFL 且不违反 FixedSoflan/MaiBug 开关语义的物件。
 
 当前实现只修复 Soflan 视觉坐标系，不触碰歌曲、判定或谱面数据；复杂变速对比结果证明其积分轨迹保持不变。

@@ -42,8 +42,8 @@ For chart-command work, inspect the target chart format and any conversion tools
 For each supported object type, design with this sequence:
 
 1. Identify the note group and convert the relevant audio time(s) to Soflan Y.
-2. Compute `currentSoflanTime` once per group/frame when possible.
-3. Compute `diffTime = noteSoflanTime - currentSoflanTime`.
+2. Compute `currentSoflanPosition` once per group/frame when possible.
+3. Compute `diffTime = noteSoflanPosition - currentSoflanPosition`.
 4. Map visual progress using the target object's original visual semantics.
 5. Preserve original judgment checks on real audio time.
 6. Route visibility through Soflan visible-range lookup when stop/reverse/bounce can alter entry timing.

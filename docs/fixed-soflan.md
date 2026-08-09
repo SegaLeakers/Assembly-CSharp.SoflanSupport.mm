@@ -132,14 +132,14 @@ DefaultUnifiedSpeed = 600f
 基础时间窗：
 
 ```csharp
-DefaultMsec = 240000 / unifiedSpeed
+DefaultTime = 240000 / unifiedSpeed
 ```
 
 与原版 Tap 移动一致的 Mai bug 修正：
 
 ```csharp
 speedRatio = unifiedSpeed / 150
-MaiBugAdjustMSec =
+MaiBugAdjust =
     (speedRatio - 1) * (-0.5 / speedRatio) * 1.6 * 1000 / 60
 ```
 
@@ -147,40 +147,40 @@ MaiBug 偏移先应用到真实音频时间，再转换为 Soflan Y；移动和�
 Soflan Y 距离：
 
 ```csharp
-RawCurrentAudioMsec = CurrentAudioMsec - RuntimeChartOffsetMsec
-AdjustedCurrentAudioMsec = RawCurrentAudioMsec + MaiBugAdjustMSec
-CurrentSoflanTime = ConvertAudioTimeToY(AdjustedCurrentAudioMsec, group)
-MoveStartTime = DefaultMsec
-ScaleStartTime = 2 * DefaultMsec
-VisibleMsec = DefaultMsec * 2
+RawCurrentAudioTime = CurrentAudioTime - RuntimeChartOffset
+AdjustedCurrentAudioTime = RawCurrentAudioTime + MaiBugAdjust
+CurrentSoflanPosition = ConvertAudioTimeToY(AdjustedCurrentAudioTime, group)
+MoveStartDistance = DefaultTime
+ScaleStartDistance = 2 * DefaultTime
+VisibleTime = DefaultTime * 2
 ```
 
-`RuntimeChartOffsetMsec` 是谱面加载时按 player/monitor 快照的
+`RuntimeChartOffset` 是谱面加载时按 player/monitor 快照的
 `UserOption.GetAdjustMSec()`。该基础换算始终启用；
-`EnableSoflanMaiBugAdjust` 只控制最后的 `MaiBugAdjustMSec`。
+`EnableSoflanMaiBugAdjust` 只控制最后的 `MaiBugAdjust`。
 
 是否应用该偏移由 `mai2.ini` 的
 `[Patches] EnableSoflanMaiBugAdjust` 控制，默认启用。关闭时
-`MaiBugAdjustMSec = 0`，FixedSoflan 的固定速度时间窗仍然生效，只是不再加入原版
+`MaiBugAdjust = TimeSpan.Zero`，FixedSoflan 的固定速度时间窗仍然生效，只是不再加入原版
 MaiBug 音频偏移；修改配置后需要重启游戏。
 
-Soflan 时间差：
+SoflanPosition 差值：
 
 ```csharp
-diffTime = noteSoflanTime - currentSoflanTime
+diffTime = noteSoflanPosition - currentSoflanPosition
 absDiffTime = Abs(diffTime)
 ```
 
-这里的 `diffTime` 已使用 MaiBug 调整后的 `CurrentSoflanTime`。其中：
+这里的 `diffTime` 已使用 MaiBug 调整后的 `CurrentSoflanPosition`。其中：
 
 - `diffTime > 0` 表示还没到该 note 的 Soflan 判定时间。
-- `diffTime == 0` 表示当前 Soflan 时间到达该 note。
-- `diffTime < 0` 表示已经越过该 note 的 Soflan 时间。
+- `diffTime == 0` 表示当前 SoflanPosition 到达该 note。
+- `diffTime < 0` 表示已经越过该 note 的 SoflanPosition。
 
 移动进度：
 
 ```csharp
-MotionProgress = Clamp01((MoveStartTime - diffTime) / (2 * MoveStartTime))
+MotionProgress = Clamp01((MoveStartDistance - diffTime) / (2 * MoveStartDistance))
 ```
 
 坐标映射：
@@ -192,27 +192,27 @@ Y = Lerp(StartPos, outsideY, MotionProgress)
 
 因此进度和位置关系为：
 
-| Soflan 时间差 | 进度 | Y 位置 |
+| SoflanPosition 差值 | 进度 | Y 位置 |
 | --- | ---: | --- |
-| `diffTime == MoveStartTime` | `0` | `StartPos`，通常是 `120` |
+| `diffTime == MoveStartDistance` | `0` | `StartPos`，通常是 `120` |
 | `diffTime == 0` | `0.5` | `EndPos`，通常是 `400` 判定线 |
-| `diffTime == -MoveStartTime` | `1` | `outsideY`，通常是 `680` |
+| `diffTime == -MoveStartDistance` | `1` | `outsideY`，通常是 `680` |
 
 缩放进度：
 
 ```csharp
-ScaleProgress = Clamp01((ScaleStartTime - absDiffTime) / DefaultMsec)
+ScaleProgress = Clamp01((ScaleStartDistance - absDiffTime) / MoveStartDistance)
 ```
 
 对于默认固定速度 `600`：
 
 ```text
-DefaultMsec = 400ms
-MaiBugAdjustMSec = -10ms
-AdjustedCurrentAudioMsec = CurrentAudioMsec - RuntimeChartOffsetMsec - 10ms
-MoveStartTime = 400 Soflan-Y ms
-ScaleStartTime = 800 Soflan-Y ms
-VisibleMsec = 800ms
+DefaultTime = 400ms
+MaiBugAdjust = -10ms
+AdjustedCurrentAudioTime = CurrentAudioTime - RuntimeChartOffset - 10ms
+MoveStartDistance = 400 Soflan-Y units
+ScaleStartDistance = 800 Soflan-Y units
+VisibleTime = 800ms
 ```
 
 在无其它变速的 1x 段中，这等价于原版：固定 `600` 速度的物件在判定前
@@ -229,12 +229,12 @@ VisibleMsec = 800ms
 普通 Soflan 使用玩家速度传入的 `num` 作为可见时间窗。FixedSoflan 物件改用：
 
 ```csharp
-FixedSoflan.GetVisibleMsec(FixedSoflan.GetUnifiedSpeed(note))
+FixedSoflan.GetVisibleTime(FixedSoflan.GetUnifiedSpeed(note))
 ```
 
 这样可见性窗口不会因为玩家物件速度不同而改变。窗口起点使用
-`CurrentAudioMsec - RuntimeChartOffsetMsec + MaiBugAdjustMSec` 转换得到的
-Soflan 时间，保证注册时机、MA2 原始时间轴和视觉进度一致。
+`CurrentAudioTime - RuntimeChartOffset + MaiBugAdjust` 转换得到的
+SoflanPosition，保证注册时机、MA2 原始时间轴和视觉进度一致。
 
 ### Tap 系移动和缩放
 
@@ -243,17 +243,17 @@ Soflan 时间，保证注册时机、MA2 原始时间轴和视觉进度一致。
 - `SoflanManager`
 - 是否存在 Soflan
 - note 所属 Soflan group
-- note 的 Soflan 时间
+- note 的 `SoflanPosition`
 - FixedSoflan flag 和固定速度
 
 `Monitor.NoteBase.GetNoteYPosition()` 只在 `isInSoflan && checkSupportSoflan()` 时进入 Soflan 分支。当前 `checkSupportSoflan()` 只允许 base type 为 `Tap`。
 
 `Monitor.NoteBase.GetNoteYPosition_soflan()` 中：
 
-- 普通 Soflan 使用玩家速度计算 MaiBug 音频偏移和 `DefaultMsec`。
+- 普通 Soflan 使用玩家速度计算 MaiBug 音频偏移和 `DefaultTime`。
 - FixedSoflan 使用声明速度计算同一组参数。
-- 两者都调用 `GetCurrentSoflanTimeWithOffsetsCached()`，先移除当前玩家的
-  `GetAdjustMSec()`，再把 MaiBug 偏移后的原始谱面时间映射为当前 Soflan 时间。
+- 两者都调用 `GetCurrentSoflanPositionWithOffsetsCached()`，先移除当前玩家的
+  `GetAdjustMSec()`，再把 MaiBug 偏移后的原始谱面时间映射为当前 `SoflanPosition`。
 - Y、Guide 和缩放统一使用调整后的 `diffTime`；不再另外叠加 `offsetYAdj`，避免重复补偿。
 
 ### BreakNote 缩放
@@ -277,7 +277,7 @@ DEBUG 构建下，`SoflanPanelBehaviour` 的右键选中 Tap 数据中增加了�
 Fixed: True/False  FixedSpd: ...
 FixedMoveP: ...  FixedScaleP: ...
 MaiBug: ...ms  AdjustedAudio: ...
-RawSoflanTime: ...  Adjusted: ...
+RawSoflanPosition: ...  Adjusted: ...
 ```
 
 这用于验证某个 Tap 是否真的进入 FixedSoflan，以及当前帧的固定速度进度是否符合预期。
@@ -330,17 +330,17 @@ dotnet run --project tools/SoflanMaiBugTests/SoflanMaiBugTests.csproj -c Release
 - `Manager.NoteData` 含 `isFixedSoflanToUnifiedSpeed` 和 `fixedSoflanUnifiedSpeed`。
 - `SoflanSupport.FixedSoflan` 被注入到目标程序集。
 - `SoflanManager.loadNote()` 会调用 FixedSoflan marker parser，并在错误时调用日志和抛异常路径。
-- `GameCtrl.__SoflanNoteDecision()` 中 FixedSoflan 物件使用 `FixedSoflan.GetVisibleMsec()`。
-- `NoteBase.GetSoflanTimeDiff()` 调用 `GetCurrentSoflanTimeWithOffsetsCached()`。
-- `NoteBase.GetNoteYPosition_soflan()` 使用纯 `DefaultMsec / 2*DefaultMsec` Soflan-Y 门槛。
+- `GameCtrl.__SoflanNoteDecision()` 中 FixedSoflan 物件使用 `FixedSoflan.GetVisibleTime()`。
+- `NoteBase.GetSoflanPositionDiff()` 调用 `GetCurrentSoflanPositionWithOffsetsCached()`。
+- `NoteBase.GetNoteYPosition_soflan()` 使用纯 `DefaultTime / 2*DefaultTime` Soflan-Y 门槛。
 - `NoteBase.NoteCheck()` 和 `BreakNote.NoteCheck()` 使用调整后的 `diffTime` 重算缩放。
 - DEBUG 面板含 FixedSoflan 的选中 note 字段和显示文本。
 
 数值验证建议：
 
-- 固定速度 `600`、1x SFL 时，`MaiBugAdjustMSec == -10ms`，移动起点应落在判定前 `390ms`。
+- 固定速度 `600`、1x SFL 时，`MaiBugAdjust == -10ms`，移动起点应落在判定前 `390ms`。
 - 固定速度 `600`、1x SFL 的判定时 Y 应约为 `393`（`StartPos=120, EndPos=400`）。
-- `EnableSoflanMaiBugAdjust=0` 时，同一用例的偏移应为 `0ms`，判定时 Y 应为 `400`。
+- `EnableSoflanMaiBugAdjust=0` 时，同一用例的偏移应为 `TimeSpan.Zero`，判定时 Y 应为 `400`。
 - 2x / 0.5x、停车、反向和跨 SFL 边界时，MaiBug 偏移必须经过实际 Soflan 积分且不得产生 NaN/Infinity。
 - 同一个 FixedSoflan Tap，在不同玩家物件速度下，FixedSoflan 的 `MotionProgress` 和 `ScaleProgress` 应保持一致。
 - 普通 Tap/Hold/BreakHold/Touch 谱面不应因为 FixedSoflan 逻辑产生回退。
