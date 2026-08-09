@@ -297,7 +297,6 @@ namespace SoflanSupport
                 reader = File.OpenText(filePath);
                 return true;
             }
-
             reader = null;
             return false;
         }
