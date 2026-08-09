@@ -4,7 +4,7 @@ This reference summarizes the current Soflan support model. Prefer live reposito
 
 ## Scope
 
-Soflan is a visual timeline speed system implemented as a MonoMod patch. It reads MA2 `SFL` rows into `SoflanManager`, then uses the Soflan time axis to drive note visibility, Y position, scaling, and selected original animations. It does not change audio playback or judgment timing.
+Soflan is a visual timeline speed system implemented as a MonoMod patch. It reads MA2 `SFL` rows into `SoflanManager`, then uses `SoflanPosition` values to drive note visibility, Y position, scaling, and selected original animations. It does not change audio playback or judgment timing.
 
 The runtime depends on `SimpleSoflanFramework.Core`:
 
@@ -110,27 +110,27 @@ If a player's chart contains no `SFL` rows, `SoflanManager.containsSoflans(playe
 
 ## Visibility
 
-Original visibility uses audio time and player note speed. Soflan visibility uses the current Soflan time and group-level visible-range lookup:
+Original visibility uses audio time and player note speed. Soflan visibility uses the current `SoflanPosition` and group-level TotalGrid range lookup:
 
 ```csharp
-currentMsec = NotesManager.GetCurrentMsec()
+currentTime = SoflanGameClock.CurrentTime
 group = getNoteSoflanGroup(monitorId, note)
-currentSoflanTime = GetCurrentSoflanTimeWithOffsetsCached(
-    monitorId, currentMsec, visualAudioOffsetMsec, group)
-visibleMsec = FixedSoflan.IsEnabledForNote(note) ? FixedSoflanVisibleMsec : num
-checkNoteVisible(note, currentMsec, visibleMsec, group, currentSoflanTime)
+currentSoflanPosition = GetCurrentSoflanPositionWithOffsetsCached(
+    monitorId, currentTime, visualAudioOffset, group)
+visibleTime = FixedSoflan.IsEnabledForNote(note) ? FixedSoflanVisibleTime : num
+checkNoteVisible(note, currentTime, visibleTime, group, currentSoflanPosition)
 ```
 
-Conceptually it maps `[currentSoflanTime, currentSoflanTime + visibleMsec]` back to one or more original audio-time ranges, then checks whether `note.time.msec` falls inside any range. This is required for stop, reverse, and bounce behavior.
+Conceptually it maps `[currentSoflanPosition, currentSoflanPosition + visibleTime]` back to one or more original TotalGrid ranges, then checks cached `noteTGrid.TotalGrid`. Missing or failed TGrid data alone uses the raw-chart `TimeSpan` fallback and increments a per-player diagnostic counter. This is required for stop, reverse, and bounce behavior.
 
 The runtime converts the current clock before Soflan integration:
 
 ```text
-rawCurrent = runtimeCurrent - UserOption.GetAdjustMSec() + visualAudioOffset
-diff = F_group(noteRawMsec) - F_group(rawCurrent)
+rawCurrentTime = runtimeCurrent - UserOption.GetAdjustMSec() + visualAudioOffset
+diff = F_group(noteRawAudioTime) - F_group(rawCurrentTime)
 ```
 
-The implementation rebuilds visible ranges lazily per player/group per frame and caches current Soflan time by player, group, normalized chart offset, and visual offset.
+The implementation rebuilds visible TotalGrid ranges lazily per player/group per frame and caches current `SoflanPosition` by player, group, normalized chart offset, and visual offset.
 
 ## Soflan Y Integration
 
@@ -159,7 +159,7 @@ Converting audio time to Soflan Y:
 | `#NF` / `#NF600` | Assigns group | Tap-family only | Patch extension |
 | Tap / Break / ExTap | Supported | Supported | Y and scale are recalculated |
 | Star / BreakStar / ExStar | Supported | Supported for position/scale | Rotation is not separately patched |
-| Hold / BreakHold | Supported | Not supported | Head and tail use Soflan times |
+| Hold / BreakHold | Supported | Not supported | Head and tail use `SoflanPosition` values |
 | TouchNoteB / TouchNoteC | Supported | Not supported | Preserve fixed touch-area animation |
 | TouchHoldC | Not covered by TouchTap logic | Not supported | Requires separate design |
 | Slide | No dedicated support | Not supported | Treat as unsupported unless code changed |
@@ -171,14 +171,14 @@ Tap-family FixedSoflan supported kinds are `Begin`, `Break`, `ExTap`, `Star`, `B
 
 Tap / Break / Star:
 
-- `NoteBase.GetNoteYPosition_soflan()` computes `diffTime = noteSoflanTime - currentSoflanTime`.
-- Normal Soflan maps `diffTime` from `[moveStartTime, 0, -moveStartTime]` to `[StartPos, EndPos, outsideY]`.
+- `NoteBase.GetNoteYPosition_soflan()` computes `diffTime = noteSoflanPosition - currentSoflanPosition`.
+- Normal Soflan maps `diffTime` from `[moveStartDistance, 0, -moveStartDistance]` to `[StartPos, EndPos, outsideY]`.
 - FixedSoflan uses progress from declared speed and maps `StartPos -> EndPos -> outsideY`.
 - `NoteBase.NoteCheck()` and `BreakNote.NoteCheck()` recalculate scale in Soflan.
 
 Hold / BreakHold:
 
-- Use separate head and tail Soflan times.
+- Use separate head and tail `SoflanPosition` values.
 - Recalculate head Y, tail Y, body length, endpoint position, and scale.
 - FixedSoflan currently does not apply.
 
@@ -186,7 +186,7 @@ TouchNoteB / TouchNoteC:
 
 - Do not use Tap Y-axis movement.
 - Keep original semantic phases: hidden, color fade-in, gather to center, then Notice at judgment time.
-- Replace only the timing axis with Soflan time.
+- Replace only the timing axis with `SoflanPosition`.
 - `TouchNoteC` inherits `TouchNoteB` display logic, so it does not need a separate patch in the current design.
 
 ## FixedSoflan Core
@@ -195,27 +195,27 @@ Default unified speed:
 
 ```csharp
 DefaultUnifiedSpeed = 600f
-DefaultMsec = 240000 / unifiedSpeed
+DefaultTime = 240000 / unifiedSpeed
 ```
 
 Movement and scale timing:
 
 ```csharp
-MoveStartTime = DefaultMsec - MaiBugAdjustMSec
-ScaleStartTime = 2 * DefaultMsec - MaiBugAdjustMSec
-VisibleMsec = DefaultMsec * 2
-MotionProgress = Clamp01((MoveStartTime - diffTime) / (2 * MoveStartTime))
-ScaleProgress = Clamp01((ScaleStartTime - absDiffTime) / DefaultMsec)
+MoveStartDistance = DefaultTime
+ScaleStartDistance = 2 * DefaultTime
+VisibleTime = DefaultTime * 2
+MotionProgress = Clamp01((MoveStartDistance - diffPosition) / (2 * MoveStartDistance))
+ScaleProgress = Clamp01((ScaleStartDistance - absDiffPosition) / MoveStartDistance)
 Y = Lerp(StartPos, EndPos + (EndPos - StartPos), MotionProgress)
 ```
 
-At fixed speed `600`, `DefaultMsec = 400ms`, `MoveStartTime = 410ms`, `ScaleStartTime = 810ms`, and `VisibleMsec = 800ms`.
+At fixed speed `600`, `DefaultTime = 400ms`, `MoveStartDistance = 400`, `ScaleStartDistance = 800`, and `VisibleTime = 800ms`.
 
 ## Important Files And Symbols
 
 - `SoflanSupport/SoflanManager.mm.cs`: `loadComposition`, `loadNote`, marker parsing, visibility ranges, Soflan Y conversion.
 - `SoflanSupport/FixedSoflan.mm.cs`: FixedSoflan constants, supported kind whitelist, progress functions.
-- `Monitor.Game.GameCtrl.mm.cs`: `__SoflanNoteDecision`, current Soflan time cache clear.
+- `Monitor.Game.GameCtrl.mm.cs`: `__SoflanNoteDecision`, current `SoflanPosition` cache clear.
 - `Monitor.NoteBase.mm.cs`: Tap-family Y and scale logic.
 - `Monitor.BreakNote.mm.cs`: Break-specific scale patch.
 - `Monitor.HoldNote.mm.cs` and `Monitor.BreakHoldNote.mm.cs`: head/tail and body visuals.
@@ -232,5 +232,5 @@ At fixed speed `600`, `DefaultMsec = 400ms`, `MoveStartTime = 410ms`, `ScaleStar
 - Negative speed: reverse/re-entry remains visible when appropriate.
 - Multi-group: marker group affects only that note.
 - Touch: fixed touch-area animation remains intact.
-- Hold: head/tail and body follow Soflan time.
+- Hold: head/tail and body follow `SoflanPosition`.
 - FixedSoflan Tap: visual progress stays consistent across player note speeds.

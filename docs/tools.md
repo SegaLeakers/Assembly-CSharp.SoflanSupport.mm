@@ -12,6 +12,11 @@
 | `tools/SoflanMarkerTests` | `net8.0` | 验证共享 marker 语法 | 否 |
 | `tools/SoflanLogTests` | `net8.0` | 验证 Release DIAG 开关、异步 ERROR 日志和 UTF-8 无 BOM | 否 |
 | `tools/SoflanMaiBugTests` | `net472` | 验证时间轴、MaiBug、可见性、多 group 和双玩家数值 | 否 |
+| `tools/SoflanPrecisionTests` | `net472;net8.0` | 验证 `TimeSpan`、`SoflanPosition` 和大绝对位置下的局部精度 | 否 |
+| `tools/SoflanVisibilityTests` | `net472;net8.0` | 对比 TimeSpan/TotalGrid 可见范围、首次注册帧、峰值与稳态分配 | 否 |
+| `tools/SoflanRuntimeIntegrationTests` | `net472` | 用原版 `NotesReader` 和真实 MA2 验证 TGrid/BPM/SFL 集成 | 否 |
+| `tools/SoflanClockTests` | `net472` | 验证 patch 后 `SoflanGameClock` 重链接 | 否 |
+| `tools/SoflanPatchHarness` | `net472` | 应用 MonoMod patch 并做 IL/Cecil fail-fast 检查 | 否 |
 
 ## SoflanCalculator
 
@@ -41,7 +46,7 @@ line=84 time=3200 speed=750 offset=60
 q
 ```
 
-输出包括玩家物件速度、`DefaultMsec`、MaiBug、运行时与 MA2 原始时间、当前 group 倍率、`diffTime`、Guide alpha、物件缩放和 Y 坐标。默认画面常量为 `StartPos=120`、`EndPos=400`，默认玩家物件速度值为 `600`。
+输出包括玩家物件速度、`DefaultTime`、MaiBug、运行时与 MA2 原始时间、当前 group 倍率、`diffPosition`、Guide alpha、物件缩放和 Y 坐标。默认画面常量为 `StartPos=120`、`EndPos=400`，默认玩家物件速度值为 `600`。
 
 适用边界：
 
@@ -171,12 +176,38 @@ dotnet run --project .\tools\SoflanMaiBugTests\SoflanMaiBugTests.csproj -c Relea
 
 只传第一个参数时执行真实复杂谱面的时间平移不变性；同时传第二个参数时再做基线视觉等价比较。
 
+### TotalGrid 可见性
+
+```powershell
+dotnet run --project .\tools\SoflanVisibilityTests\SoflanVisibilityTests.csproj -c Release -f net8.0 -- coreclr
+```
+
+该 harness 同时调用 `FillVisibleTimeSpanRangesForGamePreview()` 和
+`FillVisibleTotalGridRangesForGamePreview()`，覆盖 `1x`、`2x`、`0.5x`、停车、负速、
+折返、多 BPM、多 group 和尾段。每帧比较范围端点前后一个 grid、规则采样和固定种子随机点，
+并要求首次注册 frame 与模拟峰值可见 note 数完全一致。预热后还验证 output/scratch 实例与容量稳定；
+CoreCLR 使用 `GC.GetAllocatedBytesForCurrentThread()` 断言稳态分配为零，Unity Mono 输出明确的
+profiler-only 标记。
+
+### Mono-first 完整 runner
+
+```bash
+SOFLAN_PATCHED_ASSEMBLY=/tmp/Assembly-CSharp.SoflanSupport.dll \
+SOFLAN_INTEGRATION_CHART=/path/to/chart.ma2 \
+tools/run-soflan-tests.sh
+```
+
+runner 优先查找 Unity Editor 自带 Mono 和 `4.7.2-api`，依次执行 precision、TotalGrid
+visibility、MaiBug、真实谱面 integration 和 clock。TotalGrid visibility 还会附加运行一次
+CoreCLR `net8.0`，用于线程分配断言。找不到 Unity Mono 时只执行可用的 CoreCLR precision/
+visibility，并明确标记 Mono-only 项为 skipped。
+
 ## 验证层级
 
 自动测试只验证共享 parser 和纯数值模型。完整发布验收仍应依次包含：
 
 1. Release / Debug 主 patch 构建。
-2. 三个自动测试全部通过。
+2. precision、visibility、MaiBug、runtime integration、clock 和 patch harness 全部通过。
 3. MonoMod 实际应用成功且启动输出没有 Rules 锚点失败。
 4. 游戏内验证无 SFL、1x、停车、负速、多 group、Hold、Touch、FixedSoflan 和 P1/P2。
 5. 对谱面转换任务，再执行 MajSimai 解析、编辑器检查和目标游戏实际播放。
