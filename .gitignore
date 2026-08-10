@@ -7,6 +7,9 @@ obj/
 .idea/
 .vscode/
 
+# VS 用户特定文件 (*.csproj.user / *.pubxml.user 等)
+*.user
+
 # MonoMod patch 项目输出整洁: 仅 .mm.dll + .pdb (bin/ 已忽略, 不单独忽略产物)
 
 # Staging / 临时产物: 含游戏 DLL 与 patched 程序集, 不入库
