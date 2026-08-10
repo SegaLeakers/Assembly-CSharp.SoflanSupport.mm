@@ -71,13 +71,17 @@ namespace SoflanSupport
         private static readonly System.Comparison<NoteBase> _noteInstanceComparer = CompareNoteInstanceId;
 
         // patch_NoteBase 查询本实例是否被选中.
-        public static bool IsNoteSelected(NoteBase nb) => _selectedNote == nb;
+        public static bool IsNoteSelected(NoteBase nb) =>
+            Setting.EnableSoflanDebugPanel && _selectedNote == nb;
         // note 池化复用时 (Initialize) 清除: 若本实例曾被选中则取消选中.
+        [System.Diagnostics.Conditional("DEBUG")]
         public static void OnNoteReinitialized(NoteBase nb) { if (_selectedNote == nb) ClearSelectedNote(); }
         // 被选中的 note 进入 EndNote 时调用: 清选中 + 清面板显示数据.
+        [System.Diagnostics.Conditional("DEBUG")]
         public static void OnSelectedNoteEnded() => ClearSelectedNote();
 
         // 谱面清理、面板销毁、note 复用/结束时统一释放静态 note 引用, 避免跨场景滞留 GameObject 图.
+        [System.Diagnostics.Conditional("DEBUG")]
         public static void ClearSelectedNote()
         {
             _selectedNote = null;
@@ -307,8 +311,11 @@ namespace SoflanSupport
         }
 #else
         public static bool IsNoteSelected(NoteBase nb) => false;
+        [System.Diagnostics.Conditional("DEBUG")]
         public static void OnNoteReinitialized(NoteBase nb) { }
+        [System.Diagnostics.Conditional("DEBUG")]
         public static void OnSelectedNoteEnded() { }
+        [System.Diagnostics.Conditional("DEBUG")]
         public static void ClearSelectedNote() { }
 #endif
     }

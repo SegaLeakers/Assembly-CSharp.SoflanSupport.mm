@@ -12,13 +12,21 @@ namespace SoflanSupport
     internal static class PatchLog
     {
         public const string FilePath = "dpSoflanSupport.log";
+#if DEBUG
         private const int MaxBatchSize = 128;
+#endif
         private static readonly Encoding Utf8NoBom = new UTF8Encoding(false);
+#if DEBUG
         private static readonly ConcurrentQueue<LogEntry> queue = new ConcurrentQueue<LogEntry>();
         private static readonly AutoResetEvent queueSignal = new AutoResetEvent(false);
         private static readonly Thread workerThread;
+#else
+        private static readonly object ReleaseLogSync = new object();
+        private static int releaseLogInitialized;
+#endif
         private static long nextSequence;
 
+#if DEBUG
         static PatchLog()
         {
             workerThread = new Thread(WorkerLoop)
@@ -28,28 +36,38 @@ namespace SoflanSupport
             };
             workerThread.Start();
         }
+#endif
 
         [Conditional("DEBUG")]
         public static void WriteLine(string msg)
         {
+#if DEBUG
             if (!Setting.EnablePatchLog)
                 return;
             Enqueue("INFO", msg);
+#endif
         }
 
         public static void Error(string msg)
         {
+#if DEBUG
             Enqueue("ERROR", msg);
+#else
+            WriteReleaseError(msg);
+#endif
         }
 
-        // Release/Debug 均保留的运行时诊断通道。与普通 INFO 日志分离，便于现场日志筛选。
+        [Conditional("DEBUG")]
         public static void Diagnostic(string msg)
         {
+#if DEBUG
             if (!Setting.EnableSoflanDiagnosticLog)
                 return;
             Enqueue("DIAG", msg);
+#endif
         }
 
+#if DEBUG
         private static void Enqueue(string level, string msg)
         {
             queue.Enqueue(new LogEntry(
@@ -157,5 +175,39 @@ namespace SoflanSupport
                 Message = message;
             }
         }
+#else
+        private static void WriteReleaseError(string msg)
+        {
+            var message = msg ?? string.Empty;
+            lock (ReleaseLogSync)
+            {
+                if (Interlocked.Exchange(ref releaseLogInitialized, 1) == 0)
+                {
+                    try
+                    {
+                        File.Delete(FilePath);
+                    }
+                    catch { }
+                }
+
+                try
+                {
+                    var sequence = Interlocked.Increment(ref nextSequence);
+                    var text = $"[Seq: {sequence:D8}]" +
+                        $"[Utc: {DateTime.UtcNow:O}]" +
+                        $"[Thread: {Thread.CurrentThread.ManagedThreadId}]" +
+                        $"[ERROR]{message}{Environment.NewLine}";
+                    File.AppendAllText(FilePath, text, Utf8NoBom);
+                }
+                catch { }
+            }
+
+            try
+            {
+                UnityEngine.Debug.LogError(message);
+            }
+            catch { }
+        }
+#endif
     }
 }

@@ -88,6 +88,7 @@ namespace Monitor.Game
 
         public bool RegistNote(NoteData note)
         {
+#if DEBUG
             SoflanDiagnostic.RegisterAttempt(monitorIndex, note, "GameCtrl.RegistNote");
             try
             {
@@ -108,12 +109,16 @@ namespace Monitor.Game
                     ex);
                 throw;
             }
+#else
+            return orig_RegistNote(note);
+#endif
         }
 
         public extern bool orig_SkipRegistNote(NoteData note);
 
         public bool SkipRegistNote(NoteData note)
         {
+#if DEBUG
             try
             {
                 var result = orig_SkipRegistNote(note);
@@ -130,6 +135,9 @@ namespace Monitor.Game
                     ex);
                 throw;
             }
+#else
+            return orig_SkipRegistNote(note);
+#endif
         }
 
     }

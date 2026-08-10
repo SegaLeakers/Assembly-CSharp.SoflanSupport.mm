@@ -8,6 +8,7 @@ namespace Monitor
 {
     public class patch_SlideFan : SlideFan
     {
+#if DEBUG
         [MonoModIgnore]
         private bool[] _hitIns;
 
@@ -70,5 +71,6 @@ namespace Monitor
                 ? values[index].Count
                 : 0;
         }
+#endif
     }
 }

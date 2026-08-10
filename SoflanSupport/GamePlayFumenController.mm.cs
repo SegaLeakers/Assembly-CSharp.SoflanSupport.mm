@@ -36,6 +36,7 @@ namespace SoflanSupport
         {
             if (_panelMounted) return;
             _panelMounted = true;
+            if (!Setting.EnableSoflanDebugPanel) return;
             try
             {
                 var go = new GameObject("SoflanPanel");

@@ -9,6 +9,7 @@ namespace Monitor
 {
     public class patch_SlideRoot : SlideRoot
     {
+#if DEBUG
         [MonoModIgnore]
         private List<SlideManager.HitArea> _hitAreaList;
 
@@ -64,5 +65,6 @@ namespace Monitor
                 string.Empty,
                 "SlideRoot.NoteCheck");
         }
+#endif
     }
 }

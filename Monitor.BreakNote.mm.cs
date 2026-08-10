@@ -60,6 +60,7 @@ namespace Monitor
 
         protected void NoteCheck()
         {
+#if DEBUG
             var diagnosticProbe = SoflanDiagnostic.BeforeJudgeCheck(
                 MonitorId,
                 NoteIndex,
@@ -78,13 +79,16 @@ namespace Monitor
                 IsJudgeNote(),
                 SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec),
                 "BreakNote.NoteCheck");
+#endif
             orig_NoteCheck();
+#if DEBUG
             SoflanDiagnostic.AfterJudgeCheck(
                 diagnosticProbe,
                 JudgeResult,
                 NoteJudge.ETiming.End,
                 EndFlag,
                 SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec));
+#endif
 
             if (breakIsInSoflan && CheckSupportSoflan() && !EndFlag)
             {

@@ -8,13 +8,15 @@
 [Patches]
 EnablePatchLog=1
 EnableSoflanDiagnosticLog=1
+EnableSoflanDebugPanel=1
 EnableSoflanMaiBugAdjust=1
 ```
 
 | 配置 | 默认值 | 作用 |
 | --- | ---: | --- |
-| `EnablePatchLog` | `1` | 仅控制 Debug 构建中的普通 INFO 日志；不屏蔽 ERROR |
-| `EnableSoflanDiagnosticLog` | `1` | 控制 Release / Debug 中的 Soflan 现场诊断事件；关闭后不采集输入、物件和判定事件 |
+| `EnablePatchLog` | `1` | 仅在 Debug 构建读取，控制普通 INFO 日志；不屏蔽 ERROR |
+| `EnableSoflanDiagnosticLog` | `1` | 仅在 Debug 构建读取，控制 Soflan 现场诊断事件 |
+| `EnableSoflanDebugPanel` | `1` | 仅在 Debug 构建读取，控制是否创建 Soflan Monitor 和右键选择功能 |
 | `EnableSoflanMaiBugAdjust` | `1` | 控制 Tap/Break/Star/Hold 族的原版 MaiBug 视觉毫秒偏移是否先映射进 Soflan 时间轴 |
 
 配置由 `Setting` 首次使用时读取一次。修改后需要完整重启游戏；运行中不会热加载。
@@ -35,21 +37,21 @@ dpSoflanSupport.log
 [Seq: 00000001][Utc: 2026-07-30T01:02:03.4567890Z][Thread: 1][DIAG]evt=SESSION_BEGIN player=0
 ```
 
-实现使用单独后台线程和并发队列写盘，每次最多批量处理 128 条；写文件或转发 Unity 日志失败时会吞掉异常，避免日志系统阻断游戏。日志组件首次初始化时会尝试删除旧文件。
+Debug 构建使用单独后台线程和并发队列写盘，每次最多批量处理 128 条。Release 构建不包含 INFO/DIAG 调用、诊断 IL 注入或后台日志线程；只有实际发生 ERROR 时才按需同步写入。写文件或转发 Unity 日志失败时会吞掉异常，避免日志系统阻断游戏。
 
 级别行为：
 
 | 调用 | Release | Debug | 控制开关 |
 | --- | --- | --- | --- |
 | `PatchLog.WriteLine` / INFO | 调用被条件编译移除 | 写文件并转发 `UnityEngine.Debug.Log` | `EnablePatchLog` |
-| `PatchLog.Diagnostic` / DIAG | 写文件，不转发 Unity 日志 | 写文件，不转发 Unity 日志 | `EnableSoflanDiagnosticLog` |
-| `PatchLog.Error` / ERROR | 始终入队 | 始终入队 | 无；始终保留 |
+| `PatchLog.Diagnostic` / DIAG | 调用、参数构造和诊断状态采集均被条件编译移除 | 异步写文件，不转发 Unity 日志 | `EnableSoflanDiagnosticLog` |
+| `PatchLog.Error` / ERROR | 发生错误时同步写文件并调用 `Debug.LogError` | 异步入队 | 无；始终保留 |
 
-因此 `EnablePatchLog=0` 不是“完全禁用日志”。要停止现场诊断采集还需设置 `EnableSoflanDiagnosticLog=0`；marker 格式错误、SFL 解析错误和 `GetAdjustMSec()` 读取失败仍会记录 ERROR，并尝试调用 `UnityEngine.Debug.LogError`。
+Release 不读取两个 Debug 日志开关，也不会启动日志线程。marker 格式错误、SFL 解析错误和 `GetAdjustMSec()` 读取失败仍会记录 ERROR。
 
 ### 现场诊断事件
 
-`EnableSoflanDiagnosticLog=1` 时，加载阶段会为谱面、SFL 行和每个 note 建档；确认谱面含有 SFL 后，运行阶段才开始采集高频事件。所有物件使用 `player=<monitor>` 与 `note=<index>` 关联，主要事件如下：
+Debug 构建且 `EnableSoflanDiagnosticLog=1` 时，加载阶段会为谱面、SFL 行和每个 note 建档；确认谱面含有 SFL 后，运行阶段才开始采集高频事件。所有物件使用 `player=<monitor>` 与 `note=<index>` 关联，主要事件如下：
 
 | 事件 | 内容 |
 | --- | --- |
@@ -74,7 +76,7 @@ rg 'evt=MISS' .\dpSoflanSupport.log
 rg 'player=0 note=123( |$)' .\dpSoflanSupport.log
 ```
 
-日志组件异步写盘。复现结束后应等待约一秒再关闭进程，避免进程被强制终止时队列尾部尚未落盘。问题定位完成后可将 `EnableSoflanDiagnosticLog` 设为 `0`，减少长期日志量。
+Debug 日志组件异步写盘。复现结束后应等待约一秒再关闭进程，避免进程被强制终止时队列尾部尚未落盘。问题定位完成后可将 `EnableSoflanDiagnosticLog` 设为 `0`。
 
 主要错误策略：
 
@@ -88,14 +90,14 @@ rg 'player=0 note=123( |$)' .\dpSoflanSupport.log
 | 输入 | 构建 | 行为 |
 | --- | --- | --- |
 | `P` | Release / Debug | 调用 `GamePlayManager.SetPauseGame()`，切换暂停与恢复 |
-| `F8` | Debug | 显示或隐藏 Soflan Monitor |
-| 鼠标右键 | Debug | 在 note 平面命中并循环选择重叠的 `NoteBase`；只有进入 Tap Soflan 计算的对象会持续产生选中数据 |
+| `F8` | Debug 且面板已启用 | 显示或隐藏 Soflan Monitor |
+| 鼠标右键 | Debug 且面板已启用 | 在 note 平面命中并循环选择重叠的 `NoteBase`；只有进入 Tap Soflan 计算的对象会持续产生选中数据 |
 
 `P` 键检查由 `GameProcess.OnUpdate` 方法起始处每帧驱动，不限于有 SFL 的谱面，也没有独立配置开关。早期移植记录中的 `L` 键 DumpCurrent 路径没有进入当前 patch。
 
 ## Debug Soflan Monitor
 
-Debug 构建第一次执行 `GamePlayFumenController.Update()` 时，会创建常驻的 `SoflanPanel` GameObject 并挂载 `SoflanPanelBehaviour`。Release 构建不创建面板。
+Debug 构建第一次执行 `GamePlayFumenController.Update()` 时读取 `EnableSoflanDebugPanel`；启用时创建常驻的 `SoflanPanel` GameObject 并挂载 `SoflanPanelBehaviour`，关闭时本次进程不再尝试创建。Release 构建不读取该配置，也不创建面板。
 
 面板默认显示在屏幕右上角，默认可见，数据约每 `0.2s` 刷新一次。它显示：
 
@@ -109,7 +111,7 @@ monitor 选择规则需要注意：未选中 note 时面板显示 monitor `0`；
 
 右键选择的实现限制：
 
-- Debug 构建会在 `NoteBase.Initialize()` 给视觉物件补 `BoxCollider2D`。
+- Debug 构建且 `EnableSoflanDebugPanel=1` 时，`NoteBase.Initialize()` 才会给视觉物件补 `BoxCollider2D`。
 - 单次点击使用固定 128 项的 NonAlloc 命中缓冲；极端重叠超过该上限时不会看到全部候选。
 - 重叠候选按 Unity instance ID 排序，重复右键循环选择。
 - 被选对象结束、回池、谱面重新加载、面板销毁或对象失活时会清理静态引用。

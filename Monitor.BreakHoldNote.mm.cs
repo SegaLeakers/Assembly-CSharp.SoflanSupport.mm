@@ -68,10 +68,14 @@ namespace Monitor
                 var tailDiffPosition = breakHoldTailSoflanPosition.DeltaTo(currentSoflanPosition);
 
                 ExecuteSoflanVisual(headDiffPosition, tailDiffPosition, currentTime);
+#if DEBUG
                 const string diagnosticSource = "BreakHoldNote.ExecuteSoflan";
                 var diagnosticProbe = BeginNoteCheckDiagnostics(diagnosticSource);
+#endif
                 orig_NoteCheck();
+#if DEBUG
                 EndNoteCheckDiagnostics(diagnosticProbe, diagnosticSource);
+#endif
                 ApplySoflanScale(headDiffPosition);
                 return;
             }
@@ -83,10 +87,14 @@ namespace Monitor
 
         protected void NoteCheck()
         {
+#if DEBUG
             const string diagnosticSource = "BreakHoldNote.NoteCheck";
             var diagnosticProbe = BeginNoteCheckDiagnostics(diagnosticSource);
+#endif
             orig_NoteCheck();
+#if DEBUG
             EndNoteCheckDiagnostics(diagnosticProbe, diagnosticSource);
+#endif
 
             if (breakHoldIsInSoflan && CheckSupportSoflan())
             {
@@ -100,6 +108,7 @@ namespace Monitor
             }
         }
 
+#if DEBUG
         private SoflanDiagnostic.JudgeProbe BeginNoteCheckDiagnostics(string source)
         {
             return SoflanDiagnostic.BeforeJudgeCheck(
@@ -144,6 +153,7 @@ namespace Monitor
                 EndFlag,
                 source);
         }
+#endif
 
         private void ExecuteSoflanVisual(
             double headDiffPosition,

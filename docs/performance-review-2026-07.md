@@ -296,21 +296,23 @@ PrewarmSoflanHash != 新 BpmHash
 Release 产物 IL 已确认：
 
 - `loadComposition()` 中没有 `PatchLog.WriteLine` 外部调用。
+- 所有 `SoflanDiagnostic`、INFO 和 DIAG 调用及其参数构造均已移除。
+- Release `PatchLog` 不包含后台 worker；只有实际 ERROR 会按需同步写入。
 - `NoteBase.Initialize()` 中没有 `BoxCollider2D` 引用。
 - `SoflanPanelBehaviour` 只保留空的兼容方法，不含 `Update/OnGUI`。
 
 因此以下风险只属于 Debug，不应泛化到 Release：
 
-- `SoflanSupport/SoflanPanelBehaviour.mm.cs:23` 默认显示面板，`OnGUI()` 每次调用都会格式化字符串并使用 GUILayout。0.2 秒节流只限制数据刷新，不限制 OnGUI 字符串/IMGUI 分配。
-- Debug note 初始化为每个视觉对象添加 `BoxCollider2D`，即使用户从未右键选择；这些 collider 会进入 Physics2D 世界。
+- `EnableSoflanDebugPanel=1` 时面板默认显示，`OnGUI()` 每次调用都会格式化字符串并使用 GUILayout。0.2 秒节流只限制数据刷新，不限制 OnGUI 字符串/IMGUI 分配。
+- `EnableSoflanDebugPanel=1` 时，Debug note 初始化会为视觉对象添加 `BoxCollider2D`；设为 `0` 时不会创建这些 collider。
 - `PatchLog` 使用无界 `ConcurrentQueue`；SFL、Fixed marker 和 timing point dump 可能生产日志快于后台线程写盘与 `Debug.Log`。
-- `EnablePatchLog=false` 只让 `WriteLine()` return；调用方的插值、`ToString()`、dump 遍历和时间转换已经发生，不能完全规避成本。
+- Debug 中 `EnablePatchLog=false` 只避免入队；调用参数仍会求值。Release 调用点由 `[Conditional("DEBUG")]` 整体移除，不存在该成本。
 
-当前 Debug 面板已有有效改进：最多显示 50 group、0.2 秒刷新、`OverlapPointNonAlloc`、静态命中数组和复用 List。旧评审中“每帧显示所有 group”和“右键每次分配数组/List”已不成立。
+当前 Debug 面板已有有效改进：可通过 ini 完全不挂载、最多显示 50 group、0.2 秒刷新、`OverlapPointNonAlloc`、静态命中数组和复用 List。旧评审中“每帧显示所有 group”和“右键每次分配数组/List”已不成立。
 
 建议：
 
-- Debug 面板默认隐藏或按明确配置挂载。
+- 性能测试时设置 `EnableSoflanDebugPanel=0` 和 `EnableSoflanDiagnosticLog=0`。
 - 在节流的 `Update` 中缓存完整显示文本/GUIContent，`OnGUI` 只绘制缓存。
 - 只有启用右键选择时才给 note 添加 collider。
 - 日志调用点先判断开关；成功日志改为摘要计数；队列增加上限和 dropped count。

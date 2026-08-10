@@ -5,6 +5,7 @@
 //   2. NotesReader.loadNote    : ret 前 __SoflanLoadNote(noteData, rec, this, _playerID)
 //   3. GameCtrl.UpdateCtrl     : UserOption 后 __SoflanClearCache ; msec 检查前 __SoflanNoteDecision 派发
 //   4. GameProcess.OnUpdate    : 方法起始 __SoflanUpdateGamePlayFumenController
+// DEBUG only:
 //   5. GameScoreList.SetResult : 最终组合方法入口快照 isJudged ; 返回前 __SoflanScoreResult
 //   6. SlideRoot/SlideFan      : 最终 Initialize/NoteCheck 返回前记录初始化和滑动进度
 //   7. TouchHoldC.NoteCheck    : 最终 Mine 判定方法入口/所有返回点记录判定与 Hold 状态
@@ -34,10 +35,12 @@ namespace MonoMod
             PatchLoadNote(module);
             PatchUpdateCtrl(module);
             PatchOnUpdate(module);
+#if DEBUG
             PatchGameScoreResult(module);
             PatchSlideDiagnostics(module);
             PatchTouchHoldDiagnostics(module);
             PatchTouchNoteDiagnostics(module);
+#endif
             StripCompilerNullableMetadata(module);
             // 注: SimpleSoflanFramework.Core 源码已通过 Shared Project 直接内置进 .mm.dll,
             // 运行时无需再加载外部 Core.dll, 故原 DependencyAssemblyResolver.Register() 注入已移除.
@@ -499,6 +502,7 @@ namespace MonoMod
             il.InsertBefore(first, il.Create(OpCodes.Call, helper));
         }
 
+#if DEBUG
         // ---------------- 5. GameScoreList.SetResult ----------------
         // 不用 orig_SetResult 包装，避免覆盖先加载的 NoteFeature Mine 计分策略。
         // PostProcessor 在所有普通 patch 完成后对最终 SetResult 插入纯观测调用。
@@ -693,5 +697,6 @@ namespace MonoMod
                 RetargetBranches(body, ret, diagnosticStart);
             }
         }
+#endif
     }
 }
