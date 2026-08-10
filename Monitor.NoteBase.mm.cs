@@ -47,17 +47,13 @@ namespace Monitor
             orig_Initialize(note);
 
 #if DEBUG
-            // 池化复用时: 若本实例曾被选中, 清除选中 (避免复用实例仍标记为选中)
-            SoflanPanelBehaviour.OnNoteReinitialized(this);
             _colorSaved = false;
-
-            // 给视觉物件加 BoxCollider2D 供调试面板右键选中 (所有 note 类型: Tap/Break/Hold...).
-            // 用 2D collider: NoteObj.localScale.z=0 会把 3D BoxCollider 压成零厚度薄片;
-            // 2D 物理忽略 z, 不受影响。不手动设 size —— AddComponent 时 Unity 自动按 SpriteRenderer
-            // 的 sprite bounds 适配 (手动设 sprite.bounds.size 会因它是世界空间而与局部空间 collider 错位)。
-            if (NoteObj != null && NoteObj.GetComponent<Collider2D>() == null)
+            if (Setting.EnableSoflanDebugPanel)
             {
-                NoteObj.AddComponent<BoxCollider2D>();
+                // 池化复用时清除旧选中，并为右键选择补 2D collider。
+                SoflanPanelBehaviour.OnNoteReinitialized(this);
+                if (NoteObj != null && NoteObj.GetComponent<Collider2D>() == null)
+                    NoteObj.AddComponent<BoxCollider2D>();
             }
 #endif
 
@@ -143,6 +139,7 @@ namespace Monitor
 
         protected void NoteCheck()
         {
+#if DEBUG
             var diagnosticProbe = SoflanDiagnostic.BeforeJudgeCheck(
                 MonitorId,
                 NoteIndex,
@@ -161,13 +158,16 @@ namespace Monitor
                 IsJudgeNote(),
                 SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec),
                 "NoteBase.NoteCheck");
+#endif
             orig_NoteCheck();
+#if DEBUG
             SoflanDiagnostic.AfterJudgeCheck(
                 diagnosticProbe,
                 JudgeResult,
                 NoteJudge.ETiming.End,
                 EndFlag,
                 SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec));
+#endif
 
             if (isInSoflan && checkSupportSoflan() && !EndFlag)
             {
@@ -224,11 +224,14 @@ namespace Monitor
                 maiBugAdjust,
                 noteSoflanGroup);
 #if DEBUG
-            _rawCurrentSoflanPosition = soflanManager.GetCurrentSoflanPositionCached(
-                MonitorId,
-                currentTime,
-                noteSoflanGroup);
-            _adjustedCurrentSoflanPosition = currentSoflanPosition;
+            if (SoflanPanelBehaviour.IsNoteSelected(this))
+            {
+                _rawCurrentSoflanPosition = soflanManager.GetCurrentSoflanPositionCached(
+                    MonitorId,
+                    currentTime,
+                    noteSoflanGroup);
+                _adjustedCurrentSoflanPosition = currentSoflanPosition;
+            }
 #endif
             return noteSoflanPosition.DeltaTo(currentSoflanPosition);
         }

@@ -65,8 +65,9 @@ Release 与 Debug 的运行时差异：
 | Soflan、FixedSoflan、Hold/Touch、可见性 | 有 | 有 |
 | `P` 键暂停/恢复 | 有 | 有 |
 | 普通 `PatchLog.WriteLine()` INFO 日志 | 编译移除 | 受 `EnablePatchLog` 控制 |
-| `PatchLog.Diagnostic()` DIAG 现场日志 | 受 `EnableSoflanDiagnosticLog` 控制 | 受 `EnableSoflanDiagnosticLog` 控制 |
-| Soflan Monitor、右键选择、复制面板数据 | 无 | 有 |
+| `PatchLog.Diagnostic()` DIAG 现场日志 | 调用与采集逻辑均编译移除 | 受 `EnableSoflanDiagnosticLog` 控制 |
+| 后台日志线程 | 无；ERROR 按需同步写 | 首次 INFO/DIAG/ERROR 时创建 |
+| Soflan Monitor、右键选择、复制面板数据 | 无 | 受 `EnableSoflanDebugPanel` 控制 |
 | marker/SFL 等错误日志 | 有 | 有 |
 
 ## 部署
@@ -120,6 +121,10 @@ dotnet build -c Release .\Assembly-CSharp.SoflanSupport.mm.csproj
 dotnet build -c Debug .\Assembly-CSharp.SoflanSupport.mm.csproj
 dotnet run --project .\tools\SoflanMarkerTests\SoflanMarkerTests.csproj -c Release
 dotnet run --project .\tools\SoflanLogTests\SoflanLogTests.csproj -c Release
+dotnet run --project .\tools\SoflanLogTests\SoflanLogTests.csproj -c Debug
+dotnet run --project .\tools\SoflanBuildModeTests\SoflanBuildModeTests.csproj -c Release -- `
+  .\bin\Release\Assembly-CSharp.SoflanSupport.mm.dll `
+  .\bin\Debug\Assembly-CSharp.SoflanSupport.mm.dll
 dotnet run --project .\tools\SoflanMaiBugTests\SoflanMaiBugTests.csproj -c Release
 ```
 

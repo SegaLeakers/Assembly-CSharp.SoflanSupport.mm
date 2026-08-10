@@ -4,6 +4,7 @@ using MAI2.Util;
 using Manager;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 
 namespace SoflanSupport
@@ -87,6 +88,7 @@ namespace SoflanSupport
             public TimeSpan? LastSlideLogTime;
         }
 
+        [Conditional("DEBUG")]
         public static void BeginChartLoad(int playerId)
         {
             if (!Setting.EnableSoflanDiagnosticLog)
@@ -103,6 +105,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void CompositionLoaded(
             int playerId,
             string chartPath,
@@ -128,6 +131,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void SoflanLineLoaded(int playerId, string line)
         {
             if (!Setting.EnableSoflanDiagnosticLog)
@@ -144,6 +148,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void NoteLoaded(
             int playerId,
             NoteData note,
@@ -172,6 +177,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void CaptureInputFrame(int playerId)
         {
             if (!TryGetActivePlayer(playerId, out var state))
@@ -263,6 +269,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void VisibilityDecision(
             int playerId,
             NoteData note,
@@ -310,6 +317,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void VisibilityFallback(
             int playerId,
             NoteData note,
@@ -335,6 +343,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void VisibilityTGridFallback(
             int playerId,
             NoteData note,
@@ -362,6 +371,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void RegisterAttempt(int playerId, NoteData note, string source)
         {
             if (note == null || !TryGetActivePlayer(playerId, out var state))
@@ -387,6 +397,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void RegisterResult(int playerId, NoteData note, bool registered, string source)
         {
             if (note == null || !TryGetActivePlayer(playerId, out var state))
@@ -414,6 +425,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void SkipRegisterResult(int playerId, NoteData note, bool skipped)
         {
             if (note == null || !TryGetActivePlayer(playerId, out var state))
@@ -433,6 +445,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void ObjectInitialized(
             int playerId,
             NoteData note,
@@ -567,6 +580,7 @@ namespace SoflanSupport
             return probe;
         }
 
+        [Conditional("DEBUG")]
         public static void AfterJudgeCheck(
             JudgeProbe probe,
             NoteJudge.ETiming result,
@@ -605,6 +619,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void HoldState(
             int playerId,
             int noteIndex,
@@ -653,6 +668,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void VisualSample(
             int playerId,
             int noteIndex,
@@ -703,6 +719,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void SlideProgress(
             int playerId,
             int noteIndex,
@@ -774,6 +791,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void ScoreResult(
             int playerId,
             int noteIndex,
@@ -848,6 +866,7 @@ namespace SoflanSupport
             }
         }
 
+        [Conditional("DEBUG")]
         public static void Exception(int playerId, int noteIndex, string source, Exception ex)
         {
             if (!TryGetActivePlayer(playerId, out _))

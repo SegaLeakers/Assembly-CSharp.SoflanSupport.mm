@@ -53,6 +53,7 @@ namespace Monitor
             return orig_GetNoteYPosition();
         }
 
+#if DEBUG
         private SoflanDiagnostic.JudgeProbe __SoflanBeginNoteCheckDiagnostics()
         {
             return SoflanDiagnostic.BeforeJudgeCheck(
@@ -85,6 +86,7 @@ namespace Monitor
                 EndFlag,
                 SoflanRuntimeTime.FromGameMsecBoundary(JudgeTimingDiffMsec));
         }
+#endif
 
         private bool CheckSupportSoflan()
         {

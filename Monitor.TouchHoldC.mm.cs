@@ -7,6 +7,7 @@ namespace Monitor
 {
     public class patch_TouchHoldC : TouchHoldC
     {
+#if DEBUG
         private SoflanDiagnostic.JudgeProbe __SoflanBeginNoteCheckDiagnostics()
         {
             return SoflanDiagnostic.BeforeJudgeCheck(
@@ -50,5 +51,6 @@ namespace Monitor
                 EndFlag,
                 "TouchHoldC.NoteCheck");
         }
+#endif
     }
 }

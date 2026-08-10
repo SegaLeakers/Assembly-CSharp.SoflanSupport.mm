@@ -6,6 +6,8 @@ using SoflanSupport;
 
 internal static class Program
 {
+    private const string EnabledInfoMessage = "info marker enabled";
+    private const string DisabledInfoMessage = "info marker disabled";
     private const string EnabledDiagnosticMessage = "diagnostic marker enabled";
     private const string DisabledDiagnosticMessage = "diagnostic marker disabled";
     private const string ErrorMessage = "mixed modifier marker failure";
@@ -20,6 +22,13 @@ internal static class Program
         {
             Environment.CurrentDirectory = directory;
 
+            Setting.EnablePatchLog = true;
+            PatchLog.WriteLine(EnabledInfoMessage);
+
+            Setting.EnablePatchLog = false;
+            PatchLog.WriteLine(DisabledInfoMessage);
+            Setting.EnablePatchLog = true;
+
             Setting.EnableSoflanDiagnosticLog = true;
             PatchLog.Diagnostic(EnabledDiagnosticMessage);
 
@@ -30,13 +39,21 @@ internal static class Program
             PatchLog.Error(ErrorMessage);
 
             var path = Path.Combine(directory, PatchLog.FilePath);
-            WaitForLog(path, EnabledDiagnosticMessage, ErrorMessage);
-
+#if DEBUG
+            WaitForLog(path, EnabledInfoMessage, EnabledDiagnosticMessage, ErrorMessage);
+#else
+            WaitForLog(path, ErrorMessage);
+#endif
             var bytes = File.ReadAllBytes(path);
             var text = new UTF8Encoding(false, true).GetString(bytes);
 
-            DiagnosticWritesDiagLevelAndMessageInRelease(text);
-            DisabledDiagnosticDoesNotWrite(text);
+#if DEBUG
+            EnabledInfoWritesInfoLevelAndMessage(text);
+            EnabledDiagnosticWritesDiagLevelAndMessage(text);
+#else
+            ReleaseOmitsInfoAndDiagnosticCalls(text);
+#endif
+            DisabledDebugLogsDoNotWrite(text);
             LogUsesUtf8WithoutBom(bytes);
             ErrorStillWritesErrorLevelAndMessage(text);
 
@@ -56,14 +73,30 @@ internal static class Program
         }
     }
 
-    private static void DiagnosticWritesDiagLevelAndMessageInRelease(string text)
+    private static void EnabledInfoWritesInfoLevelAndMessage(string text)
+    {
+        Require(text.Contains("[INFO]" + EnabledInfoMessage),
+            "Enabled Soflan info message is not written at INFO level");
+    }
+
+    private static void EnabledDiagnosticWritesDiagLevelAndMessage(string text)
     {
         Require(text.Contains("[DIAG]" + EnabledDiagnosticMessage),
             "Enabled Soflan diagnostic message is not written at DIAG level");
     }
 
-    private static void DisabledDiagnosticDoesNotWrite(string text)
+    private static void ReleaseOmitsInfoAndDiagnosticCalls(string text)
     {
+        Require(!text.Contains(EnabledInfoMessage),
+            "Release executed a PatchLog.WriteLine call");
+        Require(!text.Contains(EnabledDiagnosticMessage),
+            "Release executed a PatchLog.Diagnostic call");
+    }
+
+    private static void DisabledDebugLogsDoNotWrite(string text)
+    {
+        Require(!text.Contains(DisabledInfoMessage),
+            "Disabled Soflan info message was unexpectedly written");
         Require(!text.Contains(DisabledDiagnosticMessage),
             "Disabled Soflan diagnostic message was unexpectedly written");
     }

@@ -121,3 +121,10 @@ else
     echo "SoflanRuntimeIntegrationTests: SKIPPED (requires Unity Mono)"
     echo "SoflanClockTests: SKIPPED (requires Unity Mono and patched Assembly-CSharp)"
 fi
+
+dotnet run \
+    --project tools/SoflanLogTests/SoflanLogTests.csproj \
+    -c Release
+dotnet run \
+    --project tools/SoflanLogTests/SoflanLogTests.csproj \
+    -c Debug

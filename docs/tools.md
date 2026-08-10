@@ -10,7 +10,8 @@
 | `tools/Convert-Ma2ToMajdata.ps1` | PowerShell | 把受限 MA2 BPM/SFL/lane note 转为 Majdata 文本 | 否 |
 | `tools/MajdataValidation` | `net8.0` | 用 MajSimai 重新解析转换结果并比较关键集合 | 否 |
 | `tools/SoflanMarkerTests` | `net8.0` | 验证共享 marker 语法 | 否 |
-| `tools/SoflanLogTests` | `net8.0` | 验证 Release DIAG 开关、异步 ERROR 日志和 UTF-8 无 BOM | 否 |
+| `tools/SoflanLogTests` | `net8.0` | 验证 Release 编译移除 INFO/DIAG、Debug 开关、ERROR 和 UTF-8 无 BOM | 否 |
+| `tools/SoflanBuildModeTests` | `net8.0` | 用 Cecil 审计 Release 无诊断调用/线程，并验证 Debug 面板 ini 开关 | 否 |
 | `tools/SoflanMaiBugTests` | `net472` | 验证时间轴、MaiBug、可见性、多 group 和双玩家数值 | 否 |
 | `tools/SoflanPrecisionTests` | `net472;net8.0` | 验证 `TimeSpan`、`SoflanPosition` 和大绝对位置下的局部精度 | 否 |
 | `tools/SoflanVisibilityTests` | `net472;net8.0` | 对比 TimeSpan/TotalGrid 可见范围、首次注册帧、峰值与稳态分配 | 否 |
@@ -147,9 +148,20 @@ dotnet run --project .\tools\SoflanMarkerTests\SoflanMarkerTests.csproj -c Relea
 
 ```powershell
 dotnet run --project .\tools\SoflanLogTests\SoflanLogTests.csproj -c Release
+dotnet run --project .\tools\SoflanLogTests\SoflanLogTests.csproj -c Debug
 ```
 
-在临时目录触发启用/禁用的异步 DIAG 和 ERROR，最多等待 5 秒，验证 Release 下 DIAG 会写入、关闭 `EnableSoflanDiagnosticLog` 后不写、ERROR 不受影响、UTF-8 严格可解码且无 BOM。
+Release 用例验证 INFO/DIAG 调用被编译移除且 ERROR 按需同步写入；Debug 用例验证 INFO/DIAG 开关和异步 ERROR。两者都验证 UTF-8 严格可解码且无 BOM。
+
+主 patch 的 Release/Debug 都构建后，再运行产物 IL 审计：
+
+```powershell
+dotnet run --project .\tools\SoflanBuildModeTests\SoflanBuildModeTests.csproj -c Release -- `
+  .\bin\Release\Assembly-CSharp.SoflanSupport.mm.dll `
+  .\bin\Debug\Assembly-CSharp.SoflanSupport.mm.dll
+```
+
+该测试会拒绝 Release 中残留的 `SoflanDiagnostic`、INFO/DIAG 调用或后台 worker，并确认 Debug 产物读取 `EnableSoflanDebugPanel`。
 
 ### MaiBug 与运行时时间轴
 

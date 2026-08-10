@@ -8,6 +8,7 @@ namespace Manager
     [MonoModPatch("global::Manager.GameScoreList")]
     public class SoflanGameScoreHooks
     {
+#if DEBUG
         [MonoModIgnore]
         private readonly int _monitorIndex;
 
@@ -33,5 +34,6 @@ namespace Manager
                 IsTrackSkip,
                 wasJudged);
         }
+#endif
     }
 }

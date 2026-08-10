@@ -581,7 +581,7 @@ note marker 解析更严格：
 
 ## 调试和验证
 
-DEBUG 构建会挂载 Soflan Monitor 面板。
+DEBUG 构建在 `mai2.ini` 的 `[Patches] EnableSoflanDebugPanel=1` 时挂载 Soflan Monitor 面板；默认启用，设为 `0` 后本次进程不创建面板。
 
 面板能力：
 
@@ -618,6 +618,10 @@ dotnet build -c Release Assembly-CSharp.SoflanSupport.mm.csproj
 dotnet build -c Debug Assembly-CSharp.SoflanSupport.mm.csproj
 dotnet run --project tools/SoflanMarkerTests/SoflanMarkerTests.csproj -c Release
 dotnet run --project tools/SoflanLogTests/SoflanLogTests.csproj -c Release
+dotnet run --project tools/SoflanLogTests/SoflanLogTests.csproj -c Debug
+dotnet run --project tools/SoflanBuildModeTests/SoflanBuildModeTests.csproj -c Release -- `
+  bin/Release/Assembly-CSharp.SoflanSupport.mm.dll `
+  bin/Debug/Assembly-CSharp.SoflanSupport.mm.dll
 dotnet run --project tools/SoflanMaiBugTests/SoflanMaiBugTests.csproj -c Release
 dotnet run --project tools/SoflanVisibilityTests/SoflanVisibilityTests.csproj -c Release -f net8.0 -- coreclr
 
